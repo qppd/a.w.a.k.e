@@ -1,0 +1,13 @@
+# S.A.F.E. 2.0 — Python dependencies
+opencv-python>=4.8
+mediapipe>=0.10
+numpy>=1.24
+
+# Hardware drivers (install on Raspberry Pi)
+# picamera2          # CSI camera — pre-installed on Pi OS
+# pigpio             # Hardware PWM — install via: sudo apt install pigpio
+# RPi.GPIO           # General GPIO — usually pre-installed on Pi OS
+
+# Optional — for sound playback
+# pygame
+# alsaaudio

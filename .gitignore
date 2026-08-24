@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+logs/
+models/face_landmarker.task
+.env
+*.mp4
+*.avi
+*.avi

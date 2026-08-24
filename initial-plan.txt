@@ -1,0 +1,367 @@
+# Executive Summary
+
+This report details a complete build plan for **S.A.F.E. 2.0**, a Raspberry Pi–based rotating eye-tracking drowsiness detector. The system uses a Pi board (Pi 5 recommended, Pi 4 as backup), a camera, and two servo motors in a pan/tilt mount to continuously track the driver’s face and eyes. Eye landmarks from a live video stream are analyzed (using OpenCV + MediaPipe or dlib) to compute the *Eye Aspect Ratio (EAR)* and *PERCLOS* metrics. When these exceed calibrated thresholds for a sustained duration, an audible alarm is triggered. The design includes a common-ground wiring scheme with a separate 5 V supply for servos, optional IR illumination for low-light operation, and a small buzzer or speaker for alerts.Key hardware includes: Raspberry Pi 5 (or 4) with CSI camera connector, Raspberry Pi Camera v2 (8 MP, IMX219 sensor), two micro/mini servos (e.g. TowerPro MG90S, 1.8 kg·cm), a 2-axis pan/tilt bracket, 5 V/4 A power supply (for Pi and servos), and optional IR LED ring.  Exact GPIO assignments use the Pi’s hardware PWM pins (e.g. GPIO 12, 13) for the servos; the camera uses the CSI-2 connector (or USB if using a USB webcam); ground is common. Safety notes stress using separate power rails (to avoid overloading the Pi) and avoiding ground loops. 
+
+Software architecture is modular: one module handles camera capture, one does face/eye landmark detection, one computes EAR/PERCLOS and drowsiness logic, one controls the servos (pan/tilt), and one handles the alarm. Required libraries include Python’s OpenCV, MediaPipe (or dlib), `pigpio` or `gpiozero` for PWM, `alsaaudio` or `pygame` for sound, and possibly `smbus`/I²C if adding external sensors. Key algorithms: EAR calculation from six eye landmarks, PERCLOS (percentage of time eyes mostly closed), and temporal filtering (eyes must remain “closed” below threshold for N consecutive frames to count as drowsiness). Pan/tilt logic computes face center offset and adjusts servo angles gradually to keep the face centered.
+
+A calibration procedure is needed to set EAR thresholds and timing (e.g. EAR_threshold ≈0.18–0.20 and closed-duration ≈1.5 s, as found in prior studies). Testing uses scenarios like normal driving (no alarm), extended eye closure (>2 s, alarm), random blinking (no alarm), and various lighting/head positions. Metrics include accuracy, false positive/negative rates, and reaction time. 
+
+The **software flow** is illustrated by the following flowchart:
+
+```mermaid
+flowchart TD
+    A[Initialize Cameras, Servos, Alarm] --> B{Capture Frame}
+    B --> C{Face Detected?}
+    C -- No --> D[Pan/Tilt Scan or Hold] --> B
+    C -- Yes --> E[Extract Eye Landmarks]
+    E --> F[Compute EAR & PERCLOS]
+    F --> G{Drowsiness Score > threshold?}
+    G -- No --> H[Reset counters, continue monitoring] --> B
+    G -- Yes --> I[Trigger Alarm (sound/vibration)] --> B
+    I --> B
+```
+
+And a **pan/tilt state diagram**:
+
+```mermaid
+stateDiagram
+    [*] --> Searching
+    Searching --> Tracking : Face found
+    Tracking --> Centered : Face centered
+    Centered --> Tracking : Face off-center
+    Tracking --> Searching : Face lost
+    Centered --> Searching : Face lost
+```
+
+## Hardware Components & Wiring
+
+- **Raspberry Pi (Model 5 or 4)**: Pi 5 with 8 GB RAM is recommended (Pi 5 has 4 PWM-capable GPIO: 12,13,18,19). Use official images and stable OS.- **Camera**: Raspberry Pi Camera v2 (8 MP, IMX219 sensor). It connects via the 15-pin CSI-2 camera port (Pi 4/5 have dedicated connectors labeled CAM on the board). For Pi 5, use the mini-connector cable provided. *If using a USB webcam* instead, plug into any USB 2.0/3.0 port (no GPIO involved).  
+- **Servos (×2)**: Micro/Mini servos such as TowerPro MG90S (metal-gear, 13.4 g, 1.8 kg·cm stall torque @4.8 V) or SG90 (1.8 kg·cm). Two are needed: one for pan (left/right) and one for tilt (up/down). Mount them on a pan-tilt bracket kit (~$10) or 3D-print a mount. Use servos rated 4.8–6 V; stall current ~1–2 A each.  
+- **IR Illumination (Optional)**: A ring or cluster of IR LEDs (850 nm or 940 nm) for night/low-light. Drive via 5 V and a MOSFET/transistor from a GPIO. Ensure current limiting resistors. Alternatively, a commercial IR illuminator module.  
+- **Alarm Actuators**: A small buzzer or beeper (active 5 V buzzer) or speaker (via Pi audio). If using a GPIO output, drive it through a transistor. For a speaker, use the Pi’s 3.5 mm audio jack (analog out) or a USB sound card amplifier. Optionally, a vibration motor (coin or eccentric-mass) can be added for tactile feedback, driven via transistor from 5 V.  
+- **Power Supply**: A robust 5 V DC supply. Use at least **5 V, 4 A** (preferred 5 V 5 A) to power the Pi and servos. **Do not draw servo power from the Pi’s 5 V pins** if using more than one servo; use an external 5 V supply or a strong adapter. **Crucial:** Connect the servo power supply ground to the Pi’s ground (common ground), so the PWM signal has a reference. Avoid ground loops by a single common ground point.   
+- **Wiring**: Standard jumper wires. Connect:
+  - Pi 5 V (Pin 2 or 4) to external 5 V supply + (or use the supply’s DC jack to power Pi via USB-C and servos via separate leads).  
+  - Pi GND (any GND pin, e.g. Pin 6) common to servo ground and other grounds.  
+  - Servo *signal* wires to Pi GPIO pins (see table below).  
+  - IR LEDs + resistor to +5 V, with their ground via a GPIO-controlled NPN/MOSFET to GND.  
+  - Buzzer/vibrator positive to +5 V, control via GPIO+transistor to ground.  
+  - Pi Camera ribbon to CSI connector (lock the cable properly).  
+
+Embedding an example wiring illustration:
+
+ *Figure: Typical servo wiring. 5 V (red) and GND (black) go to power and common ground, servo signal (orange) goes to a PWM GPIO (e.g. GPIO18/pin12).*  
+
+**GPIO Pin Assignments (Pi 4/5)**: The table below recommends GPIO pins:
+
+| Board Pin | BCM GPIO | Function           | Usage                                    |
+|:---------:|:--------:|:-------------------|:-----------------------------------------|
+| Pin 2/4   | 5V       | Power              | +5 V (to servo power, IR LED ring, etc.) |
+| Pin 6/9/14/20/25/30/34/39 | GND | Ground        | Common ground (all devices)              |
+| Pin 32    | GPIO12 (PWM0) | Servo Pan Signal  | Pan servo control (hardware PWM channel) |
+| Pin 33    | GPIO13 (PWM1) | Servo Tilt Signal | Tilt servo control (hardware PWM channel)|
+| Pin 11    | GPIO17    | Buzzer/Speaker (via transistor) | Alarm output (tone)     |
+| Pin 31    | GPIO6     | IR LED control (via transistor) | Switch IR illumination       |
+| Pin 37    | GPIO26    | Vibration motor (via transistor) | Tactile alert (optional)   |
+| *CAM*     | *CSI-2*  | Camera Module       | Connect Camera Module 3 (NoIR)            |
+| USB       | N/A      | USB Camera/Sound    | Optional USB webcam or sound device        |
+
+*Notes:* The Pi’s hardware PWM channels on GPIO 12/13 allow smooth servo control. GPIO18/19 can also do PWM but 18/19 are used by the DAC (audio) on Pi 4; on Pi 5 PWM0 can route to 18/19 but those are I2S audio lines. Hence 12/13 is recommended if audio is needed. All grounds must be common. For a USB camera, connect it to any USB port (no GPIO pin involved).  
+
+**Power & Safety:** Use an official 5 V/4–5 A adapter. If powering Pi via USB-C and servos from the same supply with a splitter, ensure *one common ground*. Do not draw high servo currents through Pi traces; route servo +5 V from the adapter directly to servo Vcc (with one branch to Pi 5 V if needed). Always add a fuse or current-limiter if high currents are expected. Keep wiring neat and secure. For EMI reduction, twist power leads and decouple with capacitors (e.g. 470 µF at servo supply).  
+
+## External Power and Wiring Diagram
+
+Use a **power distribution** approach: let the external 5 V supply feed both the Pi and servos. For example, use a 5 V/4 A supply with a Y-cable or splitter: one branch to Pi’s USB-C or 5 V pin, another branch to servos’ +5 V (and to the IR LED). Connect all grounds together (Pi ground pin, servo ground, power supply negative). The Engineering Projects guide emphasizes: “Connect the ground pin of the Raspberry Pi to the ground wire on the servo... and the power wire of the large servo to the 5 volts of the external DC power supply... use the GPIO (pin 12/GPIO18 in their example) as the Data Pin.” This is illustrated below. Ensure only control signals come from the Pi; all heavy current for servos and alarm devices comes from the external 5 V (via transistors where needed).
+
+## Software Architecture
+
+The software is structured in modules (see file layout below). The **main loop** captures video frames, detects the driver’s face/eyes, computes drowsiness metrics, and actuates hardware. A high-level pseudocode:
+
+```python
+import camera, face_tracker, eye_tracker, pan_tilt, drowsiness, alarm
+
+def main():
+    camera.init()
+    face_tracker.init()
+    eye_tracker.init()
+    pan_tilt.init()
+    alarm.init()
+    drowsiness.reset()
+    while True:
+        frame = camera.read()  # get image from Pi camera or USB
+        face = face_tracker.detect(frame)
+        if face:
+            pan_tilt.update(face)      # adjust servos to center face
+            eyes = eye_tracker.detect(frame, face)
+            ear = eye_tracker.calculate_EAR(eyes)
+            perc = eye_tracker.calculate_PERCLOS(ear)
+            score = drowsiness.analyze(ear, perc)
+            if score >= thresholds['drowsy']:
+                alarm.trigger()
+            else:
+                alarm.clear()
+        else:
+            pan_tilt.search()  # e.g., slowly sweep if no face detected
+            alarm.clear()
+```
+
+**Modules and Libraries:**  
+- `camera.py`: Opens the camera (`picamera2` for CSI camera or OpenCV VideoCapture for USB), configures resolution (e.g. 640×480 or 1280×720 for face detection speed).  
+- `face_tracker.py`: Uses MediaPipe FaceMesh or dlib to find face and eye landmarks in each frame. Requires models (e.g. MediaPipe FaceMesh).  
+- `eye_tracker.py`: From landmarks, extracts the six standard eye points and computes *EAR* and *PERCLOS*. EAR formula (two vertical distances over horizontal distance) produces a scalar. PERCLOS is computed over a time window (e.g. fraction of frames in past N seconds with EAR below threshold).  
+- `pan_tilt.py`: Converts face position (e.g. face bounding-box center) into servo angle adjustments. Uses `pigpio` or `gpiozero` to send PWM pulses to GPIO 12 and 13. Implements simple proportional control: if face.x < left_threshold, increment pan; if > right_threshold, decrement pan. Similarly for tilt. Also defines search behavior.  
+- `drowsiness.py`: Implements decision logic. Maintains counters for consecutive low-EAR frames. Example:  
+   ```python
+   if ear < EAR_THRESHOLD:
+       closed_frames += 1
+   else:
+       closed_frames = 0
+   if closed_frames >= FRAME_THRESHOLD:
+       return DROWSY
+   else:
+       return NOT_DROWSY
+   ```  
+  It can also factor in PERCLOS and blink frequency to produce a **drowsiness score** (sum of indicators).  
+- `alarm.py`: Controls the alert. Could play a sound (`alsaaudio` or `pygame.mixer`) or drive a buzzer GPIO. If using audio, prepare a WAV file (beep or voice alert) and play it when triggered. If using GPIO buzzer, output PWM tone (e.g. 1 kHz square wave). Optional vibration motor can be turned on here.  
+
+**Key Algorithms:**  
+- **Face/Eye Detection:** Use a pre-trained model (no training needed). MediaPipe FaceMesh or dlib’s 68-landmark model can locate eyes. These libraries provide facial landmarks robustly in real time on Pi.  
+- **Eye Aspect Ratio (EAR):** Defined as  
+  \(\displaystyle EAR = \frac{\|p_2-p_6\| + \|p_3-p_5\|}{2\,\|p_1-p_4\|}\),  
+  where \(p_1\ldots p_6\) are eye corner and eyelid points. When eye closes, EAR drops toward 0. We average left and right eye EAR for stability.  
+- **PERCLOS:** Percentage of time eyes are *mostly closed*. For each frame, if EAR < EAR_THRESHOLD (indicating >~80% closure), count it as closed. Over a sliding window (e.g. 1–2 minutes), compute PERCLOS = (closed_frames / total_frames)×100%. Typical drowsiness thresholds are ~20–40%.  
+- **Temporal Filtering:** To avoid false alarms from normal blinks, require the EAR to stay below threshold for a minimum duration. For example, only trigger drowsiness if EAR<0.2 for ≥1.5 seconds (e.g. 45 frames at 30 fps). This distinguishes a slow blink from dozing.  
+- **Pan/Tilt Logic:** Compute face center offset:  
+  ```text
+  dx = face_center_x - frame_center_x
+  dy = face_center_y - frame_center_y
+  pan_angle_change = Kp_pan * dx
+  tilt_angle_change = Kp_tilt * dy
+  servo_pan_angle += pan_angle_change
+  servo_tilt_angle -= tilt_angle_change
+  clamp angles to servo range
+  ```
+  Optionally add a PID for smooth control. If no face, slowly oscillate to search for face.  
+
+**Calibration and Thresholds:**  
+Experimentally determine these (suggest initial values):  
+- **EAR_THRESHOLD** ≈ 0.18–0.20 (below which eyes are “closed”).  
+- **FRAME_THRESHOLD** ≈ 30–50 frames (1–1.5 s at 30 fps) to flag drowsiness.  
+- **PERCLOS window**: e.g. 1 minute, drowsy if >20%.  
+- Adjust based on user tests: see [25] which found ~0.18 optimal in one study.  
+
+**Libraries and Setup:**  
+- **OpenCV** (`opencv-python`) for image capture and drawing/debug.  
+- **MediaPipe** (or **dlib**) for facial landmarks. MediaPipe is fast and accurate.  
+- **pigpio** or **gpiozero** for GPIO/servo control. (pigpio provides hardware PWM on GPIO12/13 without CPU jitter.)  
+- **alsaaudio** or **pygame** for sound output.  
+- **RPi.GPIO** or **wiringPi** is also possible but pigpio’s background daemon is reliable for PWM.  
+- **smbus/I²C** only needed if adding e.g. an IMU; not strictly required here.  
+
+## Software Design and Files
+
+Proposed directory structure:
+
+```
+safe2/
+├─ main.py
+├─ camera.py
+├─ face_tracker.py
+├─ eye_tracker.py
+├─ pan_tilt.py
+├─ drowsiness.py
+├─ alarm.py
+├─ config.py
+│
+├─ models/
+│   └─ face_landmark_model.dat (or MediaPipe assets)
+│
+└─ logs/
+    └─ drowsiness_log.csv
+```
+
+- `main.py`: initializes modules, runs loop.  
+- `camera.py`: abstracts camera capture (CSI vs USB). Could use `picamera2` on Pi OS or OpenCV `cv2.VideoCapture(0)`.  
+- `face_tracker.py`: loads MediaPipe FaceMesh; returns face bounding box and landmarks.  
+- `eye_tracker.py`: extracts eye landmark coordinates and computes EAR/PERCLOS.  
+- `pan_tilt.py`: wraps servo control (with pigpio PWM or `gpiozero.AngularServo`). Implements a function `track(face_bbox)` to update servo positions.  
+- `drowsiness.py`: implements `analyze(ear, perc)` logic, with counters for consecutive closure.  
+- `alarm.py`: plays a sound or toggles buzzer GPIO.  
+
+Key code snippets:  
+- **EAR Calculation:** (assuming landmarks `l` are (x,y) lists for left eye)  
+  ```python
+  A = distance(l[1], l[5])
+  B = distance(l[2], l[4])
+  C = distance(l[0], l[3])
+  ear = (A + B) / (2.0 * C)
+  ```  
+- **Temporal Filtering:**  
+  ```python
+  if ear < EAR_THRESHOLD:
+      closed_frames += 1
+  else:
+      closed_frames = 0
+  if closed_frames >= FRAME_THRESHOLD:
+      is_drowsy = True
+  ```  
+- **Pan/Tilt Tracking:**  
+  ```python
+  center = frame_width // 2
+  face_x = face_bbox.center_x
+  error = face_x - center
+  pan_servo.angle += kp * error
+  pan_servo.angle = clamp(pan_servo.angle, pan_min, pan_max)
+  ```  
+
+## Testing & Calibration Protocol
+
+**Datasets/Scenarios:** Since this is an embedded prototype, create a test matrix covering typical cases (see table below). Use volunteer tests and/or public datasets (e.g. yawning/eye-closure video datasets) for validation. Log real-time flags versus ground truth.
+
+**Metrics:** For each scenario measure:
+- **Detection Accuracy:** Percent of frames where drowsy state correctly identified.  
+- **False Positive Rate (FP):** Alarm when not drowsy.  
+- **False Negative Rate (FN):** Missed alarm when drowsy.  
+- **Precision/Recall:** For alarm events.  
+- **Latency:** Time between eyes closing and alarm sounding.  
+- **Tracking Robustness:** % of time face remains centered after movement.  
+
+**Test Matrix:** Key scenarios to test (table format):
+
+| Scenario                      | Expected Outcome           | Metric / Verification                         |
+|-------------------------------|----------------------------|-----------------------------------------------|
+| Normal driving (blinks only)  | No alarm                   | FP rate ~0%; accuracy of *no-alarm*           |
+| Brief blink (<0.5 s)          | No alarm                   | FP rate (blink false alarms)                  |
+| Prolonged eye closure (>2 s)  | Alarm                      | True positive rate; FN rate                   |
+| Repeated long blinks          | Alarm (sustained)          | Multi-blink detection rate                    |
+| Head turn/shift (face visible) | Camera tracks, no alarm   | Servo tracking error; maintain detection      |
+| Head turn beyond range        | Face lost, no false alarm  | Face detection loss time; system stability    |
+| Low-light (No IR)             | (fail detection)           | Eye detection success rate (very low)         |
+| Low-light (with IR)           | Face/eyes detected, alarm if drowsy | Detection accuracy in dark              |
+| Glasses reflection            | Possibly slight lag/no effect | Compare EAR variance; ensure stable EAR     |
+| High vibration/noise          | No alarm if eyes open      | Check system noise resistance                 |
+| Wearing helmet (motorcycle)   | No detection (out of scope)| System should fail gracefully (no alarm)      |
+| Sudden braking/jerk          | No false alarm            | Ensure no spurious alarms on quick movement   |
+| Yawning (eyes partly open)    | Weakly increase score or warn | Monitor any unintended alarm triggers       |
+
+Use a **test dataset** or simulated video if available. For metrics, record alarm events and compare to manual labeling of “drowsy” vs “alert” states. Calibrate thresholds by iterating on EAR, duration, and PERCLOS to minimize FN+FP.
+
+## Parts List (BOM)
+
+| Part                    | Qty | Model/Specs                          | Supplier             | Est. Price |
+|-------------------------|:---:|--------------------------------------|----------------------|-----------:|
+| Raspberry Pi 5 (8 GB)   | 1   | Broadcom RP1, Quad-Core 2.4GHz       | Raspberry Pi Store | $175      |
+| **(Alt: Raspberry Pi 4 8GB)** | 1   | Quad-Core 1.5GHz                     | PiShop, Amazon       | ~$75      || Raspberry Pi Camera v2   | 1   | 8 MP IMX219 sensor                    | Raspberry Pi Store | $25       |
+| IR LED Illuminator      | 1   | ~850 nm IR LED ring (3W)            | AliExpress, Amazon   | $10       |
+| Servo motor (MG90S)     | 2   | 13.4 g, metal gears, 1.8 kg·cm @4.8 V  | Amazon/TowerPro      | $4 each   |
+| Pan-Tilt Bracket kit    | 1   | 2×SG90/MG90 brackets (aluminum/plastic) | Hobby store, eBay   | $10       |
+| Buzzer (5V active)      | 1   | 5 V tone buzzer (e.g. 400–1500 Hz)    | Digikey/Amazon       | $1        |
+| Mini Speaker + Amp      | 1   | 3 W, 8 Ω (with 5 V amp)             | Amazon/Adafruit      | $8        |
+| Coin Vibration Motor    | 1   | 5 VDC, eccentric mass (~0.5 g·cm)     | SparkFun/Pimoroni    | $1        |
+| 5 V DC Power Supply     | 1   | 4–5 A output, 5 V                | Official PSU         | $10       |
+| GPIO Jumper Wires       | 1   | Assorted M-F/M-M                   | Various              | $5        |
+| Misc: resistors, MOSFETs |   |  (for IR LEDs/buzzer)               | Parts kit            | $5        |
+
+*Notes:* Servo stall torque from official specs (MG90S: 1.8 kg·cm at 4.8 V). Pi 5 price from official store. Camera Module price from RasPi docs. IR LEDs and bracket are generic. Power supply should be well-regulated. All parts easily sourced. Total ~\$300–350.
+
+## GPIO Pin Assignment
+
+| Pin (Broadcom) | Pin (Board) | Signal           | Function                         |
+|:--------------:|:-----------:|:-----------------|:---------------------------------|
+| GPIO12 (PWM0)  | 32          | Servo1 (Pan)     | Control pan servo PWM (HAT0)     |
+| GPIO13 (PWM1)  | 33          | Servo2 (Tilt)    | Control tilt servo PWM (HAT1)    |
+| GPIO17         | 11          | Buzzer Control   | Active buzzer via transistor     |
+| GPIO6          | 31          | IR LED Control   | Drive IR LEDs (via MOSFET)       |
+| GPIO26         | 37          | Vibration Control| Vibration motor (via transistor) |
+| 5V Power       | 2,4         | +5 V             | External 5 V (to servos, IR, etc.)|
+| GND            | 6 (and others)| GND            | Common ground (all devices)      |
+| CSI Camera     | –           | CAM Interface    | Connect Pi Camera ribbon here    |
+| USB            | –           | USB Ports        | Plug in USB camera or speaker    |Refer to Raspberry Pi pinout docs for orientation. Avoid using GPIO18/19 if audio out is needed, since those double as I2S. For Pi 4/5, hardware PWM is on 12/13 for the two servo channels. The Camera v2 connects via the CSI-2 ribbon cable to the CAM port on the Pi board. 
+
+## Algorithms and Key Functions
+
+- **Face & Landmark Detection:** Use MediaPipe FaceMesh (468 landmarks) or dlib’s 68-point model. Initialize model (`face_mesh = mp.solutions.face_mesh.FaceMesh(...)`). On each frame, get `results = face_mesh.process(rgb_frame)`. Extract eye landmarks indices for left/right eyes and pass to EAR calc. MediaPipe runs at ~10–20 fps on Pi CPUs.  
+- **EAR Computation:** For each eye (using 6 landmark points), compute the distances and EAR. Then average left and right eyes or use the smaller.  
+- **Blink/PERCLOS Filtering:** Maintain a buffer or counters. E.g. update `closed_frames` and `total_frames`. Compute PERCLOS = closed_frames / total_frames over 30–60 s windows.  
+- **Drowsiness Logic:** If `closed_frames >= N_frames` (≈45–60 frames), trigger alarm. Optionally also raise a warning if long eyes-open or yawning detected.  
+- **Pan/Tilt Control:** After detecting a face box (x_center, y_center), compare to frame center. If offset > deadband, adjust servo angle:  
+  ```python
+  pan_error = face_center_x - frame_center_x
+  tilt_error = frame_center_y - face_center_y
+  pan_angle += Kp_pan * pan_error
+  tilt_angle += Kp_tilt * tilt_error
+  ```
+  Clamp within servo range (usually 0–180°). Use pigpio PWM: `pi.set_servo_pulsewidth(servo_pin, pulse)` or gpiozero’s `AngularServo(servo_pin, min_pulse_width=..., max_pulse_width=...)`.  
+- **Alarm Activation:** Once flagged drowsy, call `alarm.trigger()`, which could simply play a sound file (non-blocking) or set a GPIO high for buzzer. Ensure to reset `closed_frames` after alarm or implement logic to avoid repeated immediate triggers.  
+
+## Calibration and Testing
+
+- **Calibration:** Begin by tuning `EAR_THRESHOLD` by measuring EAR when eyes are open vs closed (e.g. record sample video). Typical open-eye EAR ~0.3–0.4, closed <0.15. Set EAR_THRESHOLD ≈0.2. Tune `FRAME_THRESHOLD` (frames) so normal blinks (<0.5 s) do not reach it. The cited study found ~0.18 and 1.5 s optimal.  
+- **Pan/Tilt Limits:** Program servo angle limits to avoid mechanical stops. If face consistently out of range, issue a “out of range” log or warning.  
+- **Lighting:** Test under daylight and dark conditions. For low light, turn on IR LEDs; verify that the IR LEDs illuminate the face sufficiently. Without IR in dark, detection may fail (acknowledge as limitation).  
+- **False Alarm Reduction:** Use temporal logic so a single mis-detected long blink (e.g. 0.8 s) does not immediately alarm. Require persistence.  
+- **Logging:** Record timestamped drowsiness scores and alerts to a CSV for offline analysis of accuracy.  
+
+## Testing Scenarios
+
+| Scenario                | Expected Behavior                | Metric/Check                                  |
+|-------------------------|----------------------------------|-----------------------------------------------|
+| Normal alert driver     | No alarm                         | False-alarm rate (should be near 0%)          |
+| Short blinks (<0.5s)    | No alarm                         | Verify no alarms during normal blink events   |
+| Prolonged closure (>2s) | Alarm triggered                  | True positive rate (should approach 100%)     |
+| Repeated micro-sleeps   | Alarm (cumulative fatigue)       | Response after cumulative closures            |
+| Eye open, head tilt     | No alarm, pan/tilt follows face  | Face stays centered (tracking error small)    |
+| Head turned off-axis    | If within servo range: face recenters | Success % of reacquire                |
+| Sudden jerk (shake)     | System should not crash/startle | Stability and false-trigger check             |
+| Bright glare/sunglasses | Possibly no detection (warn)     | Detection failure rate with occlusions        |
+| Indoor low-light (IR on)| Face/eyes detected, normal logic| Eye detection success (%)                    |
+| Outdoor bright daylight | Face/eyes detected reliably      | Eye detection success (%)                    |
+| Motorcyclist (helmet)   | No detection, no alarm           | System handles no-face gracefully             |
+
+Metrics include **accuracy**, **precision/recall** of drowsiness detection, and **response time** from eyes-closed to alarm. Fine-tune thresholds to balance false positives vs false negatives. 
+
+## Safety and EMI Considerations
+
+- Use separate power rails for high-current devices. Always common-ground servo supply to Pi ground.  
+- Avoid powering servos from Pi’s 5 V pin if current draw >500 mA. Use a dedicated PSU for servos.  
+- Place capacitors (100–470 µF) across servo power leads to smooth spikes.  
+- Keep signal wires (servo and GPIO leads) separate from high-current wires to reduce noise coupling.  
+- If using a speaker/amplifier, watch EMI. Use twisted pair for speaker wires.  
+- Secure all components (e.g. camera, servos) in an enclosure to avoid loose wires.  
+
+## Timeline & Milestones
+
+```mermaid
+gantt
+    title S.A.F.E. 2.0 Project Timeline
+    dateFormat  YYYY-MM-DD
+    section Procurement & Setup
+    Select parts and suppliers    :a1, 2026-08-25, 1w
+    Order and receive components  :after a1, 2w
+    section Hardware Assembly
+    Assemble & wire hardware      :2026-09-15, 2w
+    Servo bracket & calibration   :2026-09-29, 1w
+    section Software Development
+    Setup environment, libraries  :2026-09-15, 1w
+    Camera capture & face detect  :2026-09-22, 2w
+    Pan/Tilt control coding       :2026-09-29, 2w
+    EAR/PERCLOS algorithm         :2026-10-13, 2w
+    Alarm & I/O integration       :2026-10-20, 1w
+    section Testing & Calibration
+    System calibration (thresholds):2026-10-27, 2w
+    User testing (day/night)      :2026-11-10, 2w
+    section Documentation
+    Analyze results & refine      :2026-11-24, 1w
+    Finalize report/presentation  :2026-12-01, 1w
+```
+
+*Milestones:* Part procurement and initial assembly (Sep), core software (Oct), testing/calibration (Nov), report (Dec). Some tasks (camera capture & pan/tilt) can overlap, but overall sequential milestones are outlined above.
+
+## References- Raspberry Pi official camera documentation (Camera v2 is 8 MP, IMX219 sensor).  
+- Servo specifications (TowerPro MG90S servo: 1.8 kg·cm stall torque @4.8 V).  
+- Common-ground wiring advice (Pi ground must be servo ground).  
+- Eye Aspect Ratio definition and thresholds.  
+- PERCLOS concept (percent eyelid closure).  
+
+This plan provides a detailed, implementable blueprint for S.A.F.E. 2.0, meeting the stated scope and addressing the known limitations (lighting, false alarms, mechanical range). All components and methods are drawn from current Raspberry Pi and computer vision practices, ensuring feasibility with off-the-shelf hardware and no custom AI training required.
