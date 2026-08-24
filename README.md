@@ -237,6 +237,12 @@ python -m pytest tests/test_eye_tracker.py -v
 
 ---
 
+## Author
+
+**qppd** — [GitHub](https://github.com/qppd)
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
