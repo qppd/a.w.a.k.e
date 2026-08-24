@@ -60,7 +60,7 @@ The system is designed for the Raspberry Pi 5 (or 4) with a Pi Camera v2, but al
 
 | Component | Specification | Quantity |
 |---|---|---|
-| Raspberry Pi 5 (or 4) | 8 GB RAM recommended | 1 |
+| Raspberry Pi 4 (4 GB) | 4 GB RAM | 1 |
 | Raspberry Pi Camera v2 | 8 MP, IMX219 sensor, CSI-2 connector | 1 |
 | Servo motor (MG90S) | 1.8 kg-cm stall torque, metal gears, 4.8V | 2 |
 | Pan-tilt bracket | 2-axis mount for SG90/MG90 servos | 1 |

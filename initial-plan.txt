@@ -35,7 +35,7 @@ stateDiagram
 
 ## Hardware Components & Wiring
 
-- **Raspberry Pi (Model 5 or 4)**: Pi 5 with 8 GB RAM is recommended (Pi 5 has 4 PWM-capable GPIO: 12,13,18,19). Use official images and stable OS.- **Camera**: Raspberry Pi Camera v2 (8 MP, IMX219 sensor). It connects via the 15-pin CSI-2 camera port (Pi 4/5 have dedicated connectors labeled CAM on the board). For Pi 5, use the mini-connector cable provided. *If using a USB webcam* instead, plug into any USB 2.0/3.0 port (no GPIO involved).  
+- **Raspberry Pi (Model 5 or 4)**:Pi 4 with 4 GB RAM is recommended (Pi 4/5 have hardware PWM on GPIO 12,13). Use official images and stable OS.- **Camera**: Raspberry Pi Camera v2 (8 MP, IMX219 sensor). It connects via the 15-pin CSI-2 camera port (Pi 4/5 have dedicated connectors labeled CAM on the board). For Pi 5, use the mini-connector cable provided. *If using a USB webcam* instead, plug into any USB 2.0/3.0 port (no GPIO involved).  
 - **Servos (×2)**: Micro/Mini servos such as TowerPro MG90S (metal-gear, 13.4 g, 1.8 kg·cm stall torque @4.8 V) or SG90 (1.8 kg·cm). Two are needed: one for pan (left/right) and one for tilt (up/down). Mount them on a pan-tilt bracket kit (~$10) or 3D-print a mount. Use servos rated 4.8–6 V; stall current ~1–2 A each.  
 - **IR Illumination (Optional)**: A ring or cluster of IR LEDs (850 nm or 940 nm) for night/low-light. Drive via 5 V and a MOSFET/transistor from a GPIO. Ensure current limiting resistors. Alternatively, a commercial IR illuminator module.  
 - **Alarm Actuators**: A small buzzer or beeper (active 5 V buzzer) or speaker (via Pi audio). If using a GPIO output, drive it through a transistor. For a speaker, use the Pi’s 3.5 mm audio jack (analog out) or a USB sound card amplifier. Optionally, a vibration motor (coin or eccentric-mass) can be added for tactile feedback, driven via transistor from 5 V.  
@@ -250,9 +250,8 @@ Use a **test dataset** or simulated video if available. For metrics, record alar
 ## Parts List (BOM)
 
 | Part                    | Qty | Model/Specs                          | Supplier             | Est. Price |
-|-------------------------|:---:|--------------------------------------|----------------------|-----------:|
-| Raspberry Pi 5 (8 GB)   | 1   | Broadcom RP1, Quad-Core 2.4GHz       | Raspberry Pi Store | $175      |
-| **(Alt: Raspberry Pi 4 8GB)** | 1   | Quad-Core 1.5GHz                     | PiShop, Amazon       | ~$75      || Raspberry Pi Camera v2   | 1   | 8 MP IMX219 sensor                    | Raspberry Pi Store | $25       |
+|-------------------------|:---:|--------------------------------------|----------------------|-----------:|| **Raspberry Pi 4 (4 GB)** | 1   | Quad-Core 1.5GHz                     | PiShop, Amazon       | ~$75      |
+| Raspberry Pi Camera v2   | 1   | 8 MP IMX219 sensor                    | Raspberry Pi Store | $25       |
 | IR LED Illuminator      | 1   | ~850 nm IR LED ring (3W)            | AliExpress, Amazon   | $10       |
 | Servo motor (MG90S)     | 2   | 13.4 g, metal gears, 1.8 kg·cm @4.8 V  | Amazon/TowerPro      | $4 each   |
 | Pan-Tilt Bracket kit    | 1   | 2×SG90/MG90 brackets (aluminum/plastic) | Hobby store, eBay   | $10       |
