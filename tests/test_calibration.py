@@ -1,11 +1,11 @@
 """
-S.A.F.E. 2.0 — Unit Tests for Calibration Module
+A.W.A.K.E. 2.0 — Unit Tests for Calibration Module
 """
 from __future__ import annotations
 
 import unittest
 
-from src.safe.calibration import Calibration, CalibrationResult
+from src.awake.calibration import Calibration, CalibrationResult
 
 
 class TestComputeThresholds(unittest.TestCase):

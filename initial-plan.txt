@@ -1,6 +1,6 @@
 # Executive Summary
 
-This report details a complete build plan for **S.A.F.E. 2.0**, a Raspberry Pi–based rotating eye-tracking drowsiness detector. The system uses a Pi board (Pi 5 recommended, Pi 4 as backup), a camera, and two servo motors in a pan/tilt mount to continuously track the driver’s face and eyes. Eye landmarks from a live video stream are analyzed (using OpenCV + MediaPipe or dlib) to compute the *Eye Aspect Ratio (EAR)* and *PERCLOS* metrics. When these exceed calibrated thresholds for a sustained duration, an audible alarm is triggered. The design includes a common-ground wiring scheme with a separate 5 V supply for servos, optional IR illumination for low-light operation, and a small buzzer or speaker for alerts.Key hardware includes: Raspberry Pi 5 (or 4) with CSI camera connector, Raspberry Pi Camera v2 (8 MP, IMX219 sensor), two micro/mini servos (e.g. TowerPro MG90S, 1.8 kg·cm), a 2-axis pan/tilt bracket, 5 V/4 A power supply (for Pi and servos), and optional IR LED ring.  Exact GPIO assignments use the Pi’s hardware PWM pins (e.g. GPIO 12, 13) for the servos; the camera uses the CSI-2 connector (or USB if using a USB webcam); ground is common. Safety notes stress using separate power rails (to avoid overloading the Pi) and avoiding ground loops. 
+This report details a complete build plan for **A.W.A.K.E. 2.0**, a Raspberry Pi–based rotating eye-tracking drowsiness detector. The system uses a Pi board (Pi 5 recommended, Pi 4 as backup), a camera, and two servo motors in a pan/tilt mount to continuously track the driver’s face and eyes. Eye landmarks from a live video stream are analyzed (using OpenCV + MediaPipe or dlib) to compute the *Eye Aspect Ratio (EAR)* and *PERCLOS* metrics. When these exceed calibrated thresholds for a sustained duration, an audible alarm is triggered. The design includes a common-ground wiring scheme with a separate 5 V supply for servos, optional IR illumination for low-light operation, and a small buzzer or speaker for alerts.Key hardware includes: Raspberry Pi 5 (or 4) with CSI camera connector, Raspberry Pi Camera v2 (8 MP, IMX219 sensor), two micro/mini servos (e.g. TowerPro MG90S, 1.8 kg·cm), a 2-axis pan/tilt bracket, 5 V/4 A power supply (for Pi and servos), and optional IR LED ring.  Exact GPIO assignments use the Pi’s hardware PWM pins (e.g. GPIO 12, 13) for the servos; the camera uses the CSI-2 connector (or USB if using a USB webcam); ground is common. Safety notes stress using separate power rails (to avoid overloading the Pi) and avoiding ground loops. 
 
 Software architecture is modular: one module handles camera capture, one does face/eye landmark detection, one computes EAR/PERCLOS and drowsiness logic, one controls the servos (pan/tilt), and one handles the alarm. Required libraries include Python’s OpenCV, MediaPipe (or dlib), `pigpio` or `gpiozero` for PWM, `alsaaudio` or `pygame` for sound, and possibly `smbus`/I²C if adding external sensors. Key algorithms: EAR calculation from six eye landmarks, PERCLOS (percentage of time eyes mostly closed), and temporal filtering (eyes must remain “closed” below threshold for N consecutive frames to count as drowsiness). Pan/tilt logic computes face center offset and adjusts servo angles gradually to keep the face centered.
 
@@ -164,7 +164,7 @@ Experimentally determine these (suggest initial values):
 Proposed directory structure:
 
 ```
-safe2/
+awake2/
 ├─ main.py
 ├─ camera.py
 ├─ face_tracker.py
@@ -332,8 +332,7 @@ Metrics include **accuracy**, **precision/recall** of drowsiness detection, and 
 ## Timeline & Milestones
 
 ```mermaid
-gantt
-    title S.A.F.E. 2.0 Project Timeline
+gantttitle A.W.A.K.E. 2.0 Project Timeline
     dateFormat  YYYY-MM-DD
     section Procurement & Setup
     Select parts and suppliers    :a1, 2026-08-25, 1w
@@ -361,6 +360,4 @@ gantt
 - Servo specifications (TowerPro MG90S servo: 1.8 kg·cm stall torque @4.8 V).  
 - Common-ground wiring advice (Pi ground must be servo ground).  
 - Eye Aspect Ratio definition and thresholds.  
-- PERCLOS concept (percent eyelid closure).  
-
-This plan provides a detailed, implementable blueprint for S.A.F.E. 2.0, meeting the stated scope and addressing the known limitations (lighting, false alarms, mechanical range). All components and methods are drawn from current Raspberry Pi and computer vision practices, ensuring feasibility with off-the-shelf hardware and no custom AI training required.
+- PERCLOS concept (percent eyelid closure).This plan provides a detailed, implementable blueprint for A.W.A.K.E. 2.0, meeting the stated scope and addressing the known limitations (lighting, false alarms, mechanical range). All components and methods are drawn from current Raspberry Pi and computer vision practices, ensuring feasibility with off-the-shelf hardware and no custom AI training required.

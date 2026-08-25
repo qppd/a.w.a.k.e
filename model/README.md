@@ -1,6 +1,6 @@
-# 3D Models — S.A.F.E. 2.0
+# 3D Models — A.W.A.K.E. 2.0
 
-This folder contains STL files for 3D-printed parts used in the S.A.F.E. 2.0 drowsiness detection system.
+This folder contains STL files for 3D-printed parts used in the A.W.A.K.E. 2.0 drowsiness detection system.
 
 ## Model: Super Ultra Compact Pan-Tilt Camera Mount v1
 

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to S.A.F.E. 2.0 will be documented in this file.
+All notable changes to A.W.A.K.E. 2.0 will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.1.0] - 2026-08-24
 
-Initial release of S.A.F.E. 2.0.
+Initial release of A.W.A.K.E. 2.0.
 
 ### Added
 

@@ -1,4 +1,4 @@
-"""S.A.F.E. 2.0 — Configuration & Thresholds"""
+"""A.W.A.K.E. 2.0 — Configuration & Thresholds"""
 from dataclasses import dataclass
 
 

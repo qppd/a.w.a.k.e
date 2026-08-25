@@ -1,5 +1,5 @@
 """
-S.A.F.E. 2.0 — Unit Tests for Eye Tracker & EAR Algorithm
+A.W.A.K.E. 2.0 — Unit Tests for Eye Tracker & EAR Algorithm
 """
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.safe.config import CFG, Config
-from src.safe.eye_tracker import (
+from src.awake.config import CFG, Config
+from src.awake.eye_tracker import (
     EyeResult,
     EyeTracker,
     LEFT_EYE_IDX,
@@ -226,7 +226,7 @@ class TestPERCLOS(unittest.TestCase):
         self.tracker = EyeTracker()
         self.frame_size = (640, 480)
 
-    @patch("src.safe.eye_tracker.time")
+    @patch("src.awake.eye_tracker.time")
     def test_all_open_gives_zero_perclos(self, mock_time):
         """If eyes are always open, PERCLOS should be 0."""
         mock_time.time.return_value = 1000.0
@@ -234,7 +234,7 @@ class TestPERCLOS(unittest.TestCase):
         result = self.tracker.compute(lm, self.frame_size)
         self.assertAlmostEqual(result.perclos, 0.0, places=5)
 
-    @patch("src.safe.eye_tracker.time")
+    @patch("src.awake.eye_tracker.time")
     def test_all_closed_gives_full_perclos(self, mock_time):
         """If eyes are always closed, PERCLOS should be 1.0."""
         mock_time.time.return_value = 1000.0
@@ -243,7 +243,7 @@ class TestPERCLOS(unittest.TestCase):
             result = self.tracker.compute(lm, self.frame_size)
         self.assertAlmostEqual(result.perclos, 1.0, places=5)
 
-    @patch("src.safe.eye_tracker.time")
+    @patch("src.awake.eye_tracker.time")
     def test_half_closed_perclos(self, mock_time):
         """Alternating open/closed should give PERCLOS ~ 0.5."""
         counter = {"t": 1000.0}
@@ -262,7 +262,7 @@ class TestPERCLOS(unittest.TestCase):
         # 10 closed out of 20 frames
         self.assertAlmostEqual(result.perclos, 0.5, delta=0.05)
 
-    @patch("src.safe.eye_tracker.time")
+    @patch("src.awake.eye_tracker.time")
     def test_perclos_window_expiry(self, mock_time):
         """Old frames outside the window should not affect PERCLOS."""
         counter = {"t": 1000.0}

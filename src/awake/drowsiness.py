@@ -1,4 +1,4 @@
-"""S.A.F.E. 2.0 — Drowsiness Decision Logic"""
+"""A.W.A.K.E. 2.0 — Drowsiness Decision Logic"""
 from __future__ import annotations
 
 import logging

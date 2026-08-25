@@ -1,4 +1,4 @@
-"""S.A.F.E. 2.0 — Main Entry Point"""
+"""A.W.A.K.E. 2.0 — Main Entry Point"""
 from __future__ import annotations
 
 import csv
@@ -23,10 +23,10 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger("safe2")
+logger = logging.getLogger("awake2")
 
 
-class SafeApp:
+class AwakeApp:
 
     def __init__(self) -> None:
         self.camera = Camera()
@@ -39,7 +39,7 @@ class SafeApp:
         self._log_writer = None
 
     def run(self) -> None:
-        logger.info("S.A.F.E. 2.0 starting …")
+        logger.info("A.W.A.K.E. 2.0 starting …")
         self._init_all()
         self._open_log()
         try:
@@ -59,7 +59,7 @@ class SafeApp:
         os.makedirs(CFG.log_dir, exist_ok=True)
         if CFG.headless:
             print("\n" + "=" * 50)
-            print("  S.A.F.E. 2.0 — Headless Mode (no display)")
+            print("  A.W.A.K.E. 2.0 — Headless Mode (no display)")
             print("  Press Ctrl+C to stop")
             print("=" * 50 + "\n")
 
@@ -106,7 +106,7 @@ class SafeApp:
                 )
 
             if self._debug_enabled():
-                cv2.imshow("S.A.F.E. 2.0", frame)
+                cv2.imshow("A.W.A.K.E. 2.0", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
@@ -146,7 +146,7 @@ class SafeApp:
             self._log_file.close()
         if self._debug_enabled():
             cv2.destroyAllWindows()
-        logger.info("S.A.F.E. 2.0 stopped")
+        logger.info("A.W.A.K.E. 2.0 stopped")
 
     @staticmethod
     def _debug_enabled() -> bool:
@@ -201,7 +201,7 @@ def main() -> None:
     import argparse
     from .config import CFG
 
-    parser = argparse.ArgumentParser(description="S.A.F.E. 2.0 — Drowsiness Detection")
+    parser = argparse.ArgumentParser(description="A.W.A.K.E. 2.0 — Drowsiness Detection")
     parser.add_argument(
         "--calibrate", action="store_true",
         help="Run interactive EAR threshold calibration instead of detection",
@@ -246,7 +246,7 @@ def main() -> None:
         finally:
             cal.release()
     else:
-        app = SafeApp()
+        app = AwakeApp()
         app.run()
 
 

@@ -1,4 +1,4 @@
-"""S.A.F.E. 2.0 — Interactive Calibration Mode"""
+"""A.W.A.K.E. 2.0 — Interactive Calibration Mode"""
 from __future__ import annotations
 
 import csv
@@ -88,7 +88,7 @@ class Calibration:
 
             self._draw_hud(frame, len(open_samples), len(closed_samples), sample_target)
 
-            cv2.imshow("S.A.F.E. 2.0 — Calibration", frame)
+            cv2.imshow("A.W.A.K.E. 2.0 — Calibration", frame)
             key = cv2.waitKey(1) & 0xFF
 
             if key == KEY_QUIT:
@@ -182,7 +182,7 @@ class Calibration:
 
         cv2.rectangle(frame, (0, 0), (w, 90), (40, 40, 40), -1)
         cv2.putText(
-            frame, "S.A.F.E. 2.0 — Calibration Mode",
+            frame, "A.W.A.K.E. 2.0 — Calibration Mode",
             (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2,
         )
 

@@ -1,4 +1,4 @@
-"""S.A.F.E. 2.0 — Eye Tracker Module"""
+"""A.W.A.K.E. 2.0 — Eye Tracker Module"""
 from __future__ import annotations
 
 import logging

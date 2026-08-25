@@ -1,6 +1,6 @@
-# Contributing to S.A.F.E. 2.0
+# Contributing to A.W.A.K.E. 2.0
 
-Thank you for your interest in contributing to S.A.F.E. 2.0. This document outlines the guidelines for contributing to this project.
+Thank you for your interest in contributing to A.W.A.K.E. 2.0. This document outlines the guidelines for contributing to this project.
 
 ---
 
@@ -9,8 +9,8 @@ Thank you for your interest in contributing to S.A.F.E. 2.0. This document outli
 1. Fork the repository on GitHub.
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/<your-username>/s.a.f.e.git
-   cd s.a.f.e
+   git clone https://github.com/<your-username>/a.w.a.k.e.git
+   cd a.w.a.k.e
    ```
 3. Create a virtual environment and install dependencies:
    ```bash
@@ -41,13 +41,13 @@ All 33 existing tests must pass before submitting a pull request.
 
 ```bash
 # With display
-python -m src.safe.main --camera 0
+python -m src.awake.main --camera 0
 
 # Headless
-python -m src.safe.main --headless --camera 0
+python -m src.awake.main --headless --camera 0
 
 # Calibration
-python -m src.safe.main --calibrate --camera 0
+python -m src.awake.main --calibrate --camera 0
 ```
 
 ---
@@ -79,7 +79,7 @@ When adding new functionality, follow the existing module structure:
 | `calibration.py` | Interactive threshold calibration |
 | `main.py` | Entry point and orchestration |
 
-New modules should be placed in `src/safe/` and follow the same single-responsibility pattern.
+New modules should be placed in `src/awake/` and follow the same single-responsibility pattern.
 
 ---
 

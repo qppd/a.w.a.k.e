@@ -1,4 +1,4 @@
-# S.A.F.E. 2.0 — Python dependencies
+# A.W.A.K.E. 2.0 — Python dependencies
 opencv-python>=4.8
 mediapipe>=0.10
 numpy>=1.24

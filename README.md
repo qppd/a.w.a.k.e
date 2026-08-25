@@ -1,4 +1,4 @@
-# S.A.F.E. 2.0
+# A.W.A.K.E. 2.0
 
 System for Alerting Fatigued Eyes
 
@@ -31,7 +31,7 @@ A Raspberry Pi-based drowsiness detection system that uses real-time eye trackin
 
 ## Overview
 
-S.A.F.E. 2.0 continuously monitors a driver's face and eyes using a camera mounted on a motorised pan/tilt bracket. The system computes two key metrics in real time:
+A.W.A.K.E. 2.0 continuously monitors a driver's face and eyes using a camera mounted on a motorised pan/tilt bracket. The system computes two key metrics in real time:
 
 - **Eye Aspect Ratio (EAR)** -- a geometric measure of eye openness derived from facial landmarks.
 - **PERCLOS** -- the percentage of time the eyes are mostly closed over a sliding window.
@@ -96,8 +96,8 @@ STL files for the pan/tilt bracket are included in the `model/` directory. The d
 ### Raspberry Pi
 
 ```bash
-git clone https://github.com/qppd/s.a.f.e.git
-cd s.a.f.e
+git clone https://github.com/qppd/a.w.a.k.e.git
+cd a.w.a.k.e
 pip install -r requirements.txt
 sudo apt update && sudo apt install pigpio
 sudo pigpiod
@@ -106,8 +106,8 @@ sudo pigpiod
 ### Windows / macOS (Development)
 
 ```bash
-git clone https://github.com/qppd/s.a.f.e.git
-cd s.a.f.e
+git clone https://github.com/qppd/a.w.a.k.e.git
+cd a.w.a.k.e
 pip install -r requirements.txt
 ```
 
@@ -132,13 +132,13 @@ On Raspberry Pi, the following system packages are also needed:
 
 ```bash
 # Raspberry Pi (auto-detects CSI camera)
-python -m src.safe.main
+python -m src.awake.main
 
 # Windows/macOS (specify webcam index)
-python -m src.safe.main --camera 0
+python -m src.awake.main --camera 0
 
 # Headless mode (terminal output, no display window)
-python -m src.safe.main --headless
+python -m src.awake.main --headless
 ```
 
 ### Calibration Mode
@@ -146,7 +146,7 @@ python -m src.safe.main --headless
 Run calibration first to determine optimal EAR thresholds for your face. The system will record samples of your open and closed eyes, then suggest threshold values.
 
 ```bash
-python -m src.safe.main --calibrate --camera 0
+python -m src.awake.main --calibrate --camera 0
 ```
 
 During calibration, use the following keys:
@@ -176,7 +176,7 @@ During calibration, use the following keys:
 
 ## Configuration
 
-All thresholds and system parameters are defined in `src/safe/config.py`:
+All thresholds and system parameters are defined in `src/awake/config.py`:
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -195,8 +195,8 @@ All thresholds and system parameters are defined in `src/safe/config.py`:
 ## Project Structure
 
 ```
-s.a.f.e/
-├── src/safe/
+a.w.a.k.e/
+├── src/awake/
 │   ├── __init__.py
 │   ├── main.py              # Entry point and main detection loop
 │   ├── config.py            # System configuration and thresholds

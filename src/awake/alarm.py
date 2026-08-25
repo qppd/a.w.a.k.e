@@ -1,4 +1,4 @@
-"""S.A.F.E. 2.0 — Alarm Module"""
+"""A.W.A.K.E. 2.0 — Alarm Module"""
 from __future__ import annotations
 
 import logging
