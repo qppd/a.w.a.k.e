@@ -127,7 +127,7 @@ class PanTilt:
         if self._tilt_moving_since is not None:
             if now - self._tilt_moving_since >= CFG.tilt_move_time:
                 # Servo has had time to reach position — stop PWM signal
-                self._stop_tilt_pwm()
+                self._hold_tilt_position()
                 self._tilt_moving_since = None
                 self._tilt_cooldown_until = now + CFG.tilt_cooldown_seconds
             return  # either still moving or just finished — skip this frame
@@ -174,7 +174,7 @@ class PanTilt:
         # Tilt: respect moving/cooldown state from update()
         if self._tilt_moving_since is not None:
             if now - self._tilt_moving_since >= CFG.tilt_move_time:
-                self._stop_tilt_pwm()
+                self._hold_tilt_position()
                 self._tilt_moving_since = None
                 self._tilt_cooldown_until = now + CFG.tilt_cooldown_seconds
             return  # still moving or just finished — skip this frame
@@ -243,14 +243,14 @@ class PanTilt:
         if self._has_gpio and self._tilt_pwm is not None:
             self._tilt_pwm.ChangeDutyCycle(duty)
 
-    def _stop_tilt_pwm(self) -> None:
-        """Stop tilt PWM signal to eliminate servo jitter.
+    def _hold_tilt_position(self) -> None:
+        """Hold the tilt servo at its current angle (re-apply position pulse).
 
-        Setting duty cycle to 0 keeps the GPIO pin LOW (no pulses).
-        The MG90S holds its position mechanically via gear friction.
+        Instead of killing PWM (which causes the servo to lose torque and
+        drift/reset due to gravity), we keep sending the position pulse so
+        the servo actively holds its angle.
         """
-        if self._has_gpio and self._tilt_pwm is not None:
-            self._tilt_pwm.ChangeDutyCycle(0)
+        self._apply_tilt()
 
     @property
     def angles(self) -> tuple[float, float]:
