@@ -65,6 +65,15 @@ else
     warn "Create one with: python3 -m venv ${PROJECT_DIR}/venv"
 fi
 
+# ── Detect Wayland vs X11 ───────────────────────────────────
+QT_PLATFORM="xcb"
+if [[ -n "${WAYLAND_DISPLAY:-}" ]] || pgrep -x wayvnc >/dev/null 2>&1 || pgrep -x wayland >/dev/null 2>&1; then
+    QT_PLATFORM="wayland"
+    log "Detected Wayland display"
+else
+    log "Detected X11 display"
+fi
+
 # ── Step 0: Check for Qt Wayland plugin ──────────────────────
 if [[ "${QT_PLATFORM}" == "wayland" ]]; then
     if ! dpkg -l | grep -q qt6-wayland 2>/dev/null; then
@@ -128,15 +137,6 @@ fi
 
 # Detect running user (who invoked sudo)
 REAL_USER="${SUDO_USER:-pi}"
-
-# Detect Wayland vs X11
-QT_PLATFORM="xcb"
-if [[ -n "${WAYLAND_DISPLAY:-}" ]] || pgrep -x wayvnc >/dev/null 2>&1; then
-    QT_PLATFORM="wayland"
-    log "Detected Wayland display"
-else
-    log "Detected X11 display"
-fi
 
 # Get user UID for XDG_RUNTIME_DIR
 REAL_UID=$(id -u "${REAL_USER}")
