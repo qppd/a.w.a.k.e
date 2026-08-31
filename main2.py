@@ -17,6 +17,10 @@ import argparse
 import sys
 import time
 
+# Ensure picamera2 is importable from system packages (Raspberry Pi)
+if "/usr/lib/python3/dist-packages" not in sys.path:
+    sys.path.insert(0, "/usr/lib/python3/dist-packages")
+
 import cv2
 
 # ── Pan servo constants ─────────────────────────────────────
@@ -52,18 +56,42 @@ def main() -> None:
     lgpio.tx_servo(chip, PAN_GPIO, NEUTRAL_US)
     print(f"Pan servo initialised on GPIO {PAN_GPIO} (pulse: {NEUTRAL_US}µs)")
 
-    # ── Init camera ──────────────────────────────────────────
-    cap = cv2.VideoCapture(args.camera)
-    if not cap.isOpened():
-        print(f"ERROR: Cannot open camera {args.camera}")
-        lgpio.tx_servo(chip, PAN_GPIO, 0)  # stop pulse
-        lgpio.gpio_free(chip, PAN_GPIO)
-        lgpio.gpiochip_close(chip)
-        sys.exit(1)
+    # ── Init camera (picamera2 on Pi, OpenCV fallback) ────────
+    picamera = None
+    cap = None
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-    print(f"Camera {args.camera} opened ({args.width}x{args.height})")
+    def _is_raspberry_pi() -> bool:
+        try:
+            with open("/proc/cpuinfo", "r") as f:
+                return "Raspberry Pi" in f.read()
+        except FileNotFoundError:
+            return False
+
+    if _is_raspberry_pi():
+        try:
+            from picamera2 import Picamera2
+            picamera = Picamera2()
+            config = picamera.create_preview_configuration(
+                main={"size": (args.width, args.height), "format": "RGB888"},
+            )
+            picamera.configure(config)
+            picamera.start()
+            print(f"picamera2 initialised ({args.width}x{args.height})")
+        except (ImportError, Exception) as exc:
+            print(f"picamera2 failed ({exc}) — falling back to OpenCV")
+            picamera = None
+
+    if picamera is None:
+        cap = cv2.VideoCapture(args.camera)
+        if not cap.isOpened():
+            print(f"ERROR: Cannot open camera {args.camera}")
+            lgpio.tx_servo(chip, PAN_GPIO, 0)
+            lgpio.gpio_free(chip, PAN_GPIO)
+            lgpio.gpiochip_close(chip)
+            sys.exit(1)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+        print(f"Camera {args.camera} opened via OpenCV ({args.width}x{args.height})")
 
     # ── Pan control state ────────────────────────────────────
     current_pulse = NEUTRAL_US
@@ -73,8 +101,13 @@ def main() -> None:
 
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
+            if picamera is not None:
+                frame = picamera.capture_array("main")
+            else:
+                ok, frame = cap.read()
+                if not ok:
+                    frame = None
+            if frame is None:
                 print("No frame, retrying...")
                 time.sleep(0.1)
                 continue
@@ -124,7 +157,10 @@ def main() -> None:
         lgpio.tx_servo(chip, PAN_GPIO, 0)  # stop pulse
         lgpio.gpio_free(chip, PAN_GPIO)
         lgpio.gpiochip_close(chip)
-        cap.release()
+        if picamera is not None:
+            picamera.stop()
+        if cap is not None:
+            cap.release()
         cv2.destroyAllWindows()
         print("Cleaned up. Bye!")
 
