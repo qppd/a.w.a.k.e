@@ -13,10 +13,25 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_NAME="awake"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-PYTHON_BIN="$(which python3)"
 MODEL_DIR="${PROJECT_DIR}/models"
 MODEL_FILE="${MODEL_DIR}/face_landmarker.task"
 MODEL_URL="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+
+# Detect venv — prefer project-local venv over system Python
+VENV_DIR=""
+PYTHON_BIN=""
+for candidate in "${PROJECT_DIR}/venv" "${PROJECT_DIR}/.venv"; do
+    if [[ -f "${candidate}/bin/python3" ]]; then
+        VENV_DIR="${candidate}"
+        PYTHON_BIN="${candidate}/bin/python3"
+        break
+    fi
+done
+
+# Fallback to system Python if no venv found
+if [[ -z "${PYTHON_BIN}" ]]; then
+    PYTHON_BIN="$(which python3)"
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -43,6 +58,12 @@ fi
 
 log "Project directory: ${PROJECT_DIR}"
 log "Python binary:     ${PYTHON_BIN}"
+if [[ -n "${VENV_DIR}" ]]; then
+    log "Virtual env:       ${VENV_DIR}"
+else
+    warn "No venv found — using system Python (may fail on newer Debian)"
+    warn "Create one with: python3 -m venv ${PROJECT_DIR}/venv"
+fi
 
 # ── Step 1: Install Python dependencies ──────────────────────
 log "Installing Python dependencies..."
@@ -51,6 +72,14 @@ if [[ -f "${PROJECT_DIR}/requirements.txt" ]]; then
     log "Dependencies installed from requirements.txt"
 else
     warn "No requirements.txt found — skipping dependency install"
+fi
+
+# Update service file to use venv Python if found
+if [[ -n "${VENV_DIR}" ]]; then
+    VENV_PYTHON="${VENV_DIR}/bin/python3"
+    log "Service will use venv Python: ${VENV_PYTHON}"
+else
+    VENV_PYTHON="${PYTHON_BIN}"
 fi
 
 # ── Step 2: Pre-download face model ──────────────────────────
@@ -99,7 +128,7 @@ After=graphical.target
 Type=simple
 User=root
 WorkingDirectory=${PROJECT_DIR}
-ExecStart=${PYTHON_BIN} -m awake.main
+ExecStart=${VENV_PYTHON} -m awake.main
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
