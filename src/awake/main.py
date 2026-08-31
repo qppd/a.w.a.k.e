@@ -50,6 +50,17 @@ class AwakeApp:
             self._cleanup()
 
     def _init_all(self) -> None:
+        from .face_tracker import model_exists, _MODEL_PATH
+        if not model_exists():
+            logger.warning(
+                "Face model missing at %s — will attempt download on first run.",
+                _MODEL_PATH,
+            )
+            logger.warning(
+                "  To pre-download for offline use:\n"
+                "  wget -O models/face_landmarker.task \"%s\"",
+                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            )
         self.camera.init()
         self.face_tracker.init()
         self.eye_tracker.init()

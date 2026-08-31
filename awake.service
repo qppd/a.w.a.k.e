@@ -1,0 +1,22 @@
+[Unit]
+Description=A.W.A.K.E. 2.0 — Drowsiness Detection (VNC)
+After=graphical.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/awake
+ExecStart=/usr/bin/python3 -m awake.main
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# VNC display — change :1 to match your VNC display
+# Check with: vncserver -list  OR  ps aux | grep vnc
+Environment=DISPLAY=:1
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=HOME=/home/pi
+
+[Install]
+WantedBy=graphical.target

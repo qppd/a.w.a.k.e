@@ -23,14 +23,28 @@ class FaceResult:
     frame_size: tuple[int, int]
 
 
+def model_exists() -> bool:
+    """Check if the face landmarker model file exists locally."""
+    return os.path.exists(_MODEL_PATH)
+
+
 def _download_model() -> str:
     if os.path.exists(_MODEL_PATH):
         return _MODEL_PATH
     os.makedirs(os.path.dirname(_MODEL_PATH), exist_ok=True)
     logger.info("Downloading face landmarker model to %s …", _MODEL_PATH)
-    import urllib.request
-    urllib.request.urlretrieve(_MODEL_URL, _MODEL_PATH)
-    logger.info("Model downloaded.")
+    try:
+        import urllib.request
+        urllib.request.urlretrieve(_MODEL_URL, _MODEL_PATH)
+        logger.info("Model downloaded.")
+    except Exception as exc:
+        logger.error(
+            "Failed to download model (no internet?): %s\n"
+            "  Download manually and place at: %s\n"
+            "  URL: %s",
+            exc, _MODEL_PATH, _MODEL_URL,
+        )
+        raise SystemExit(1) from exc
     return _MODEL_PATH
 
 
@@ -40,6 +54,10 @@ class FaceTracker:
         self._landmarker = None
 
     def init(self) -> None:
+        if not model_exists():
+            logger.warning(
+                "Face model not found at %s — attempting download…", _MODEL_PATH
+            )
         model_path = _download_model()
         BaseOptions = mp.tasks.BaseOptions
         FaceLandmarker = mp.tasks.vision.FaceLandmarker
