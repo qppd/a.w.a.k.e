@@ -19,9 +19,9 @@ class Config:
 
     pan_min_angle: float = -60.0
     pan_max_angle: float = 60.0
-    tilt_min_angle: float = 135.0   # minimum working angle (°)
-    tilt_max_angle: float = 175.0   # maximum working angle (°)
-    tilt_centre_angle: float = 165.0  # front-facing / home angle (°)
+    tilt_min_angle: float = 135.0   # top of frame (°)
+    tilt_max_angle: float = 165.0   # bottom of frame / front-facing (°)
+    tilt_centre_angle: float = 150.0  # centre of working range (°)
     servo_min_pulse_us: int = 500
     servo_max_pulse_us: int = 2500
 
@@ -31,6 +31,9 @@ class Config:
     tilt_angle_deadband: float = 2.0   # min angle change (°) to trigger tilt servo
     tilt_cooldown_seconds: float = 5.0 # pause after each servo movement (s)
     tilt_move_time: float = 0.3        # time to let servo reach position before stopping PWM (s)
+    tilt_search_min: float = 135.0     # search sweep lower bound (°)
+    tilt_search_max: float = 165.0     # search sweep upper bound (°)
+    tilt_face_lost_timeout: float = 3.0  # seconds before search resumes after face lost
 
     ear_threshold: float = 0.20
     closed_frame_threshold: int = 45

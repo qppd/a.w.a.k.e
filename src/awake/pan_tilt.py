@@ -44,6 +44,7 @@ class PanTilt:
         # Tilt servo stability: stop PWM after movement, cooldown, angle deadband
         self._tilt_cooldown_until: float = 0.0
         self._tilt_moving_since: float | None = None
+        self._face_last_seen: float = 0.0  # timestamp of last face detection
 
     # ── Init ────────────────────────────────────────────────
 
@@ -141,21 +142,23 @@ class PanTilt:
             logger.debug("Tilt: cooldown %.1fs remaining — holding %.1f°", remaining, self._tilt_angle)
             return
 
-        # Always compute the exact target angle from face position.
-        # Map the full frame height to the servo's working range
-        # (tilt_min_angle .. tilt_max_angle), centred on tilt_centre_angle.
+        # Map frame position to servo angle.
+        # Bottom of frame (error_y > 0) → 165° (front-facing)
+        # Top of frame    (error_y < 0) → 135°
         half_frame = fh / 2.0
         tilt_half_range = (CFG.tilt_max_angle - CFG.tilt_min_angle) / 2.0
         desired_angle = _clamp(
-            CFG.tilt_centre_angle - (error_y / half_frame) * tilt_half_range,
+            CFG.tilt_centre_angle + (error_y / half_frame) * tilt_half_range,
             CFG.tilt_min_angle,
             CFG.tilt_max_angle,
         )
 
-        # Angle deadband — ignore tiny corrections to prevent oscillation
+        # Angle deadband — ignore tiny corrections, disconnect servo to rest
         diff = abs(desired_angle - self._tilt_angle)
         if diff < CFG.tilt_angle_deadband:
-            logger.debug("Tilt: error_y=%d  desired=%.1f°  current=%.1f°  diff=%.1f° < deadband %.1f° — hold", error_y, desired_angle, self._tilt_angle, diff, CFG.tilt_angle_deadband)
+            self._face_last_seen = now
+            self._disconnect_tilt()  # stop PWM completely — servo rests
+            logger.debug("Tilt: error_y=%d  desired=%.1f°  current=%.1f°  diff=%.1f° < deadband — disconnected", error_y, desired_angle, self._tilt_angle, diff)
             return
         logger.debug("Tilt: error_y=%d  desired=%.1f°  current=%.1f°  diff=%.1f° — will move", error_y, desired_angle, self._tilt_angle, diff)
 
@@ -167,15 +170,14 @@ class PanTilt:
         self._tilt_angle = desired_angle
         self._apply_tilt()
         self._tilt_moving_since = now
+        self._face_last_seen = now
 
     def search(self) -> None:
         """Sweep pan and tilt servos back and forth when no face detected.
 
-        Both servos sweep slowly to find a face. Pan sweeps ±30° around neutral;
-        tilt sweeps 90°–180° (downward from front-facing home).
-
-        Respects tilt cooldown/moving state — will not interrupt a servo
-        that is still moving to a previously commanded position.
+        Pan sweeps ±30° around neutral.
+        Tilt waits tilt_face_lost_timeout seconds, then sweeps
+        tilt_search_min–tilt_search_max back and forth.
         """
         now = time.time()
 
@@ -195,10 +197,15 @@ class PanTilt:
         if now < self._tilt_cooldown_until:
             return
 
-        # Tilt: sweep within working range (135°–175°) back and forth
-        tilt_half_range = (CFG.tilt_max_angle - CFG.tilt_min_angle) / 2.0
-        tilt_sweep = tilt_half_range * math.sin(now * 0.3)
-        target_tilt = _clamp(CFG.tilt_centre_angle + tilt_sweep, CFG.tilt_min_angle, CFG.tilt_max_angle)
+        # Don't search tilt until face has been gone for the timeout
+        if now - self._face_last_seen < CFG.tilt_face_lost_timeout:
+            return
+
+        # Tilt: sweep within search range back and forth
+        search_range = CFG.tilt_search_max - CFG.tilt_search_min
+        search_centre = (CFG.tilt_search_min + CFG.tilt_search_max) / 2.0
+        tilt_sweep = (search_range / 2.0) * math.sin(now * 0.3)
+        target_tilt = _clamp(search_centre + tilt_sweep, CFG.tilt_search_min, CFG.tilt_search_max)
         if abs(self._tilt_angle - target_tilt) > 0.5:
             self._tilt_angle = target_tilt
             self._apply_tilt()
@@ -258,13 +265,13 @@ class PanTilt:
             self._tilt_pwm.ChangeDutyCycle(duty)
 
     def _hold_tilt_position(self) -> None:
-        """Hold the tilt servo at its current angle (re-apply position pulse).
-
-        Instead of killing PWM (which causes the servo to lose torque and
-        drift/reset due to gravity), we keep sending the position pulse so
-        the servo actively holds its angle.
-        """
+        """Hold the tilt servo at its current angle (re-apply position pulse)."""
         self._apply_tilt()
+
+    def _disconnect_tilt(self) -> None:
+        """Stop tilt PWM completely — servo rests with no signal."""
+        if self._has_gpio and self._tilt_pwm is not None:
+            self._tilt_pwm.ChangeDutyCycle(0)
 
     @property
     def angles(self) -> tuple[float, float]:
