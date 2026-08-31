@@ -97,11 +97,11 @@ class AwakeApp:
                     self._face_lost_since = now
                 # After timeout, unlock and start searching
                 if now - self._face_lost_since >= FACE_LOCK_TIMEOUT:
-                self._face_locked = False
-                self._last_face = None
-                self._face_lost_since = 0.0
-                self.pan_tilt.reset_tracking()
-                face = None
+                    self._face_locked = False
+                    self._last_face = None
+                    self._face_lost_since = 0.0
+                    self.pan_tilt.reset_tracking()
+                    face = None
 
             if face is not None:
                 self.pan_tilt.update(face.bbox_center, face.frame_size)
