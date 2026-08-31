@@ -65,6 +65,16 @@ else
     warn "Create one with: python3 -m venv ${PROJECT_DIR}/venv"
 fi
 
+# ── Step 0: Check for Qt Wayland plugin ──────────────────────
+if [[ "${QT_PLATFORM}" == "wayland" ]]; then
+    if ! dpkg -l | grep -q qt6-wayland 2>/dev/null; then
+        warn "Qt6 Wayland plugin not found — installing..."
+        apt-get install -y qt6-wayland >/dev/null 2>&1 || warn "Could not install qt6-wayland — GUI may not work"
+    else
+        log "Qt6 Wayland plugin installed"
+    fi
+fi
+
 # ── Step 1: Install Python dependencies ──────────────────────
 log "Installing Python dependencies..."
 if [[ -f "${PROJECT_DIR}/requirements.txt" ]]; then
@@ -119,6 +129,18 @@ fi
 # Detect running user (who invoked sudo)
 REAL_USER="${SUDO_USER:-pi}"
 
+# Detect Wayland vs X11
+QT_PLATFORM="xcb"
+if [[ -n "${WAYLAND_DISPLAY:-}" ]] || pgrep -x wayvnc >/dev/null 2>&1; then
+    QT_PLATFORM="wayland"
+    log "Detected Wayland display"
+else
+    log "Detected X11 display"
+fi
+
+# Get user UID for XDG_RUNTIME_DIR
+REAL_UID=$(id -u "${REAL_USER}")
+
 cat > "${SERVICE_FILE}" << EOF
 [Unit]
 Description=A.W.A.K.E. 2.0 — Drowsiness Detection (VNC)
@@ -128,7 +150,7 @@ After=graphical.target
 Type=simple
 User=root
 WorkingDirectory=${PROJECT_DIR}
-ExecStartPre=/bin/sleep 10
+ExecStartPre=/bin/sleep 5
 ExecStart=${VENV_PYTHON} -m awake.main
 Restart=on-failure
 RestartSec=10
@@ -136,9 +158,12 @@ StandardOutput=journal
 StandardError=journal
 
 Environment=DISPLAY=${DISPLAY_NUM}
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/${REAL_UID}
 Environment=XAUTHORITY=/home/${REAL_USER}/.Xauthority
 Environment=HOME=/home/${REAL_USER}
 Environment=PYTHONPATH=${PROJECT_DIR}/src
+Environment=QT_QPA_PLATFORM=${QT_PLATFORM}
 
 [Install]
 WantedBy=graphical.target

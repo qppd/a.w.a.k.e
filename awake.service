@@ -4,19 +4,22 @@ After=graphical.target
 
 [Service]
 Type=simple
-User=root
+User=admin
 WorkingDirectory=/home/admin/a.w.a.k.e
-ExecStartPre=/bin/sleep 10
+ExecStartPre=/bin/sleep 5
 ExecStart=/home/admin/a.w.a.k.e/venv/bin/python3 -m awake.main
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-Environment=DISPLAY=:1
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=XAUTHORITY=/home/admin/.Xauthority
 Environment=HOME=/home/admin
 Environment=PYTHONPATH=/home/admin/a.w.a.k.e/src
+Environment=QT_QPA_PLATFORM=wayland
 
 [Install]
 WantedBy=graphical.target
