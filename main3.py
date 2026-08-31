@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Test script — Camera feed + Pan/Tilt servo control via rpi-hardware-pwm + RPi.GPIO.
+"""Test script — Camera feed + Pan/Tilt servo control via RPi.GPIO.
 
 GPIO pins (BCM):
-  Pan  → GPIO 12  — 360° continuous rotation servo (hardware PWM via rpi-hardware-pwm)
-  Tilt → GPIO 13  — Standard positional servo (RPi.GPIO software PWM)
+  Pan  → GPIO 12  — 360° continuous rotation servo (speed/direction via PWM)
+  Tilt → GPIO 13  — Standard positional servo (angle via PWM)
 
-Setup (one-time):
-  1. Add to /boot/firmware/config.txt:
-     dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
-  2. Reboot
-  3. pip install rpi-hardware-pwm
+Both use RPi.GPIO software PWM at 50 Hz.
+Tilt PWM is stopped after movement to eliminate jitter (servo holds via gear friction).
 
 Usage:
     python main3.py              # default camera 0
@@ -54,7 +51,7 @@ TILT_MOVE_TIME = 0.3  # seconds to wait for servo to reach position
 
 
 def _pulse_to_duty(pulse_us: float) -> float:
-    """Convert pulse width in µs to duty cycle (%)."""
+    """Convert pulse width in µs to PWM duty cycle (%)."""
     return pulse_us / PWM_PERIOD_US * 100.0
 
 
@@ -74,40 +71,30 @@ def _stop_tilt_pwm(tilt_pwm) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Camera + Pan/Tilt Servo test")
+    parser = argparse.ArgumentParser(description="Camera + Pan/Tilt Servo test (RPi.GPIO)")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (default: 0)")
     parser.add_argument("--width", type=int, default=640, help="Frame width")
     parser.add_argument("--height", type=int, default=480, help="Frame height")
     args = parser.parse_args()
 
-    # ── Init Pan servo (rpi-hardware-pwm on GPIO 12) ─────────
-    try:
-        from rpi_hardware_pwm import HardwarePWM
-    except ImportError:
-        print("ERROR: rpi-hardware-pwm not installed. Install with:")
-        print("  pip install rpi-hardware-pwm")
-        print("Also add to /boot/firmware/config.txt:")
-        print("  dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4")
-        print("Then reboot.")
-        sys.exit(1)
-
-    # Pi 5: channel 0 = GPIO 12, channel 1 = GPIO 13
-    pan_pwm = HardwarePWM(pwm_channel=0, hz=PWM_FREQ_HZ, chip=0)
-    pan_duty = _pulse_to_duty(NEUTRAL_US)
-    pan_pwm.start(pan_duty)
-    print(f"Pan  servo GPIO {PAN_GPIO}: hardware PWM at {NEUTRAL_US}µs (duty={pan_duty:.2f}%)")
-
-    # ── Init Tilt servo (RPi.GPIO software PWM on GPIO 13) ───
+    # ── Init RPi.GPIO ───────────────────────────────────────
     try:
         import RPi.GPIO as gpio
     except ImportError:
         print("ERROR: RPi.GPIO not installed. Install with:")
         print("  pip install RPi.GPIO")
         print("  # or: pip install rpi-lgpio  (Pi 5 compatibility shim)")
-        pan_pwm.stop()
         sys.exit(1)
 
     gpio.setmode(gpio.BCM)
+
+    # Pan — 360° continuous rotation servo (keeps PWM running)
+    gpio.setup(PAN_GPIO, gpio.OUT, initial=gpio.LOW)
+    pan_pwm = gpio.PWM(PAN_GPIO, PWM_FREQ_HZ)
+    pan_pwm.start(_pulse_to_duty(NEUTRAL_US))
+    print(f"Pan  servo GPIO {PAN_GPIO}: initialised at {NEUTRAL_US}µs (duty={_pulse_to_duty(NEUTRAL_US):.2f}%)")
+
+    # Tilt — 180° positional servo (PWM stopped after movement)
     gpio.setup(TILT_GPIO, gpio.OUT, initial=gpio.LOW)
     tilt_pwm = gpio.PWM(TILT_GPIO, PWM_FREQ_HZ)
     tilt_angle = TILT_DEFAULT_DEG
@@ -148,7 +135,7 @@ def main() -> None:
             print(f"ERROR: Cannot open camera {args.camera}")
             pan_pwm.stop()
             tilt_pwm.stop()
-            gpio.cleanup([TILT_GPIO])
+            gpio.cleanup([PAN_GPIO, TILT_GPIO])
             sys.exit(1)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
@@ -170,7 +157,7 @@ def main() -> None:
             # ── Check if tilt servo finished moving ──────────
             if tilt_moving_since is not None:
                 if time.time() - tilt_moving_since >= TILT_MOVE_TIME:
-                    _stop_tilt_pwm(tilt_pwm)
+                    _stop_tilt_pwm(tilt_pwm)  # servo reached position — stop PWM
                     tilt_moving_since = None
                     print(f"  Tilt stopped (jitter-free)")
 
@@ -212,7 +199,7 @@ def main() -> None:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1,
             )
 
-            cv2.imshow("Pan/Tilt Servo Test", frame)
+            cv2.imshow("Pan/Tilt Servo Test (RPi.GPIO)", frame)
 
             key = cv2.waitKey(1) & 0xFF
 
@@ -220,28 +207,28 @@ def main() -> None:
             if key in (ord("q"), 27):
                 break
 
-            # ── Pan controls (360° continuous — hardware PWM) ─
+            # ── Pan controls (360° continuous servo) ─────────
             elif key in (ord("a"), 81):  # LEFT
                 pan_pulse = min(PULSE_MAX_US, pan_pulse + pan_step)
-                pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
+                pan_pwm.ChangeDutyCycle(_pulse_to_duty(pan_pulse))
                 print(f"  Pan LEFT  -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
 
             elif key in (ord("d"), 83):  # RIGHT
                 pan_pulse = max(PULSE_MIN_US, pan_pulse - pan_step)
-                pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
+                pan_pwm.ChangeDutyCycle(_pulse_to_duty(pan_pulse))
                 print(f"  Pan RIGHT -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
 
             elif key in (ord("s"), 32):  # STOP
                 pan_pulse = NEUTRAL_US
-                pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
+                pan_pwm.ChangeDutyCycle(_pulse_to_duty(pan_pulse))
                 print(f"  Pan STOP  -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
 
-            # ── Tilt controls (180° positional — software PWM)
+            # ── Tilt controls (180° positional servo) ────────
             elif key in (ord("w"), 82):  # UP — tilt towards 180°
                 tilt_angle = _clamp(tilt_angle + tilt_step, TILT_MIN_DEG, TILT_MAX_DEG)
                 tilt_pulse = _angle_to_pulse(tilt_angle)
                 tilt_pwm.ChangeDutyCycle(_pulse_to_duty(tilt_pulse))
-                tilt_moving_since = time.time()
+                tilt_moving_since = time.time()  # start move timer
                 print(f"  Tilt UP   -> {tilt_angle:.0f} deg ({tilt_pulse} us)")
 
             elif key in (ord("x"), 84):  # DOWN — tilt towards 0°
@@ -263,12 +250,14 @@ def main() -> None:
 
     finally:
         # ── Cleanup ──────────────────────────────────────────
-        pan_pwm.stop()                    # stop hardware PWM
-        tilt_pwm.ChangeDutyCycle(0)       # stop software PWM (pin LOW)
+        pan_pwm.ChangeDutyCycle(0)   # stop pan signal (pin goes LOW)
+        tilt_pwm.ChangeDutyCycle(0)  # stop tilt signal (pin goes LOW)
         time.sleep(0.1)
+        pan_pwm.stop()
         tilt_pwm.stop()
+        gpio.output(PAN_GPIO, False)
         gpio.output(TILT_GPIO, False)
-        gpio.cleanup([TILT_GPIO])
+        gpio.cleanup([PAN_GPIO, TILT_GPIO])
         if picamera is not None:
             picamera.stop()
         if cap is not None:
