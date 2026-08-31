@@ -159,7 +159,10 @@ class PanTilt:
         """Sweep pan and tilt servos back and forth when no face detected.
 
         Both servos sweep slowly to find a face. Pan sweeps ±30° around neutral;
-        tilt sweeps 150°–180° (downward from front-facing home).
+        tilt sweeps 90°–180° (downward from front-facing home).
+
+        Respects tilt cooldown/moving state — will not interrupt a servo
+        that is still moving to a previously commanded position.
         """
         now = time.time()
 
@@ -167,6 +170,17 @@ class PanTilt:
         pan_sweep = 30 * math.sin(now * 0.5)
         pan_pulse = NEUTRAL_US + (pan_sweep / 60.0) * (PULSE_MAX_US - NEUTRAL_US)
         self._set_pan_pulse(pan_pulse)
+
+        # Tilt: respect moving/cooldown state from update()
+        if self._tilt_moving_since is not None:
+            if now - self._tilt_moving_since >= CFG.tilt_move_time:
+                self._stop_tilt_pwm()
+                self._tilt_moving_since = None
+                self._tilt_cooldown_until = now + CFG.tilt_cooldown_seconds
+            return  # still moving or just finished — skip this frame
+
+        if now < self._tilt_cooldown_until:
+            return
 
         # Tilt: sweep 90° ↔ 180° back and forth to find a face
         tilt_sweep = 45 * math.sin(now * 0.3)          # −45 .. +45
