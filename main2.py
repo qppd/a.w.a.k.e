@@ -52,8 +52,19 @@ def main() -> None:
         print("  Make sure you have permission (run with sudo if needed).")
         sys.exit(1)
 
-    lgpio.gpio_claim_output(chip, PAN_GPIO)
-    lgpio.tx_servo(chip, PAN_GPIO, NEUTRAL_US)
+    print(f"GPIO chip opened: handle={chip}")
+
+    mode = lgpio.gpio_get_mode(chip, PAN_GPIO)
+    print(f"GPIO {PAN_GPIO} mode before claim: {mode}")
+
+    ret = lgpio.gpio_claim_output(chip, PAN_GPIO)
+    print(f"gpio_claim_output({PAN_GPIO}): returned {ret}")
+
+    mode = lgpio.gpio_get_mode(chip, PAN_GPIO)
+    print(f"GPIO {PAN_GPIO} mode after claim: {mode}")
+
+    ret = lgpio.tx_servo(chip, PAN_GPIO, NEUTRAL_US)
+    print(f"tx_servo({PAN_GPIO}, {NEUTRAL_US}µs): returned {ret}")
     print(f"Pan servo initialised on GPIO {PAN_GPIO} (pulse: {NEUTRAL_US}µs)")
 
     # ── Init camera (picamera2 on Pi, OpenCV fallback) ────────
@@ -138,16 +149,16 @@ def main() -> None:
                 break
             elif key in (ord("a"), 81):  # a or LEFT arrow
                 current_pulse = min(PULSE_MAX_US, current_pulse + step)
-                lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
-                print(f"  Pan LEFT  → {current_pulse:.0f} µs")
+                ret = lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
+                print(f"  Pan LEFT  → {current_pulse:.0f} µs  (ret={ret})")
             elif key in (ord("d"), 83):  # d or RIGHT arrow
                 current_pulse = max(PULSE_MIN_US, current_pulse - step)
-                lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
-                print(f"  Pan RIGHT → {current_pulse:.0f} µs")
+                ret = lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
+                print(f"  Pan RIGHT → {current_pulse:.0f} µs  (ret={ret})")
             elif key in (ord("s"), 32):  # s or SPACE
                 current_pulse = NEUTRAL_US
-                lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
-                print(f"  Pan STOP  → {current_pulse:.0f} µs")
+                ret = lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
+                print(f"  Pan STOP  → {current_pulse:.0f} µs  (ret={ret})")
 
     except KeyboardInterrupt:
         print("\nInterrupted")
