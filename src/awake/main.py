@@ -89,7 +89,8 @@ class AwakeApp:
                 self._log_row(fps, eye.ear, eye.perclos, eye.is_closed, is_drowsy)
 
                 if self._debug_enabled():
-                    self._draw_debug(frame, face, eye, fps, is_drowsy)
+                    tilt_angle = self.pan_tilt.angles[1]
+                    self._draw_debug(frame, face, eye, fps, is_drowsy, tilt_angle)
             else:
                 self.pan_tilt.search()
                 self.alarm.clear()
@@ -99,9 +100,10 @@ class AwakeApp:
             if CFG.headless and face is not None:
                 status = "DROWSY!" if is_drowsy else "Alert"
                 alarm_str = " [ALARM]" if self.alarm.is_active else ""
+                tilt_angle = self.pan_tilt.angles[1]
                 print(
                     f"\r  EAR={eye.ear:.3f}  PERCLOS={eye.perclos:.3f}  "
-                    f"FPS={fps:.0f}  [{status}]{alarm_str}    ",
+                    f"TILT={tilt_angle:.1f}°  FPS={fps:.0f}  [{status}]{alarm_str}    ",
                     end="", flush=True,
                 )
 
@@ -159,7 +161,7 @@ class AwakeApp:
         return False
 
     @staticmethod
-    def _draw_debug(frame, face, eye, fps, drowsy) -> None:
+    def _draw_debug(frame, face, eye, fps, drowsy, tilt_angle: float = 0.0) -> None:
         from .face_tracker import FaceTracker as FT
         FT.draw(None, frame, face)
         colour = (0, 0, 255) if drowsy else (0, 255, 0)
@@ -172,12 +174,16 @@ class AwakeApp:
             cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2,
         )
         cv2.putText(
-            frame, f"FPS: {fps:.1f}", (10, 75),
+            frame, f"TILT: {tilt_angle:.1f} deg", (10, 75),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2,
+        )
+        cv2.putText(
+            frame, f"FPS: {fps:.1f}", (10, 100),
             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2,
         )
         status = "DROWSY!" if drowsy else "Alert"
         cv2.putText(
-            frame, status, (10, 100),
+            frame, status, (10, 125),
             cv2.FONT_HERSHEY_SIMPLEX, 0.8, colour, 2,
         )
 
