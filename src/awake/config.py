@@ -8,6 +8,8 @@ class Config:
     camera_height: int = 480
     camera_fps: int = 30
     camera_index: int = 0
+    camera_source: str | None = None  # video file path overrides camera_index
+    camera_rotate_180: bool = True   # rotate frame 180° (upside-down mount)
 
     servo_pan_gpio: int = 12
     servo_tilt_gpio: int = 13
@@ -25,6 +27,9 @@ class Config:
     pan_kp: float = 0.008
     tilt_kp: float = 0.008
     pan_tilt_deadband: int = 30
+    tilt_angle_deadband: float = 2.0   # min angle change (°) to trigger tilt servo
+    tilt_cooldown_seconds: float = 5.0 # pause after each servo movement (s)
+    tilt_move_time: float = 0.3        # time to let servo reach position before stopping PWM (s)
 
     ear_threshold: float = 0.20
     closed_frame_threshold: int = 45
