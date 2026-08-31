@@ -6,12 +6,13 @@ GPIO pins (BCM):
   Tilt → GPIO 13  — Standard positional servo (angle via PWM)
 
 Both use RPi.GPIO software PWM at 50 Hz.
+Tilt PWM is stopped after movement to eliminate jitter (servo holds via gear friction).
 
 Usage:
     python main3.py              # default camera 0
     python main3.py --camera 1   # specific camera index
 
-Controls (when window focused):
+Controls:
     a / LEFT   → pan left       w / UP     → tilt up
     d / RIGHT  → pan right      x / DOWN   → tilt down
     s / SPACE  → stop pan       e          → tilt to 90° (centre)
@@ -45,6 +46,9 @@ TILT_MIN_DEG = 0.0
 TILT_MAX_DEG = 180.0
 TILT_DEFAULT_DEG = 180.0  # front-facing home position
 
+# Tilt jitter fix: stop PWM after movement, servo holds via gear friction
+TILT_MOVE_TIME = 0.3  # seconds to wait for servo to reach position
+
 
 def _pulse_to_duty(pulse_us: float) -> float:
     """Convert pulse width in µs to PWM duty cycle (%)."""
@@ -59,6 +63,15 @@ def _angle_to_pulse(angle_deg: float) -> int:
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _stop_tilt_pwm(tilt_pwm) -> None:
+    """Stop tilt PWM signal to eliminate jitter.
+
+    Setting duty cycle to 0 keeps the GPIO pin LOW (no pulses).
+    The MG90S holds its position mechanically via gear friction.
+    """
+    tilt_pwm.ChangeDutyCycle(0)
 
 
 def main() -> None:
@@ -79,19 +92,21 @@ def main() -> None:
 
     gpio.setmode(gpio.BCM)
 
-    # Pan — 360° continuous rotation servo
+    # Pan — 360° continuous rotation servo (keeps PWM running)
     gpio.setup(PAN_GPIO, gpio.OUT, initial=gpio.LOW)
     pan_pwm = gpio.PWM(PAN_GPIO, PWM_FREQ_HZ)
     pan_pwm.start(_pulse_to_duty(NEUTRAL_US))
     print(f"Pan  servo GPIO {PAN_GPIO}: initialised at {NEUTRAL_US}µs (duty={_pulse_to_duty(NEUTRAL_US):.2f}%)")
 
-    # Tilt — 180° positional servo
+    # Tilt — 180° positional servo (PWM stopped after movement)
     gpio.setup(TILT_GPIO, gpio.OUT, initial=gpio.LOW)
     tilt_pwm = gpio.PWM(TILT_GPIO, PWM_FREQ_HZ)
     tilt_angle = TILT_DEFAULT_DEG
     tilt_pulse = _angle_to_pulse(tilt_angle)
     tilt_pwm.start(_pulse_to_duty(tilt_pulse))
-    print(f"Tilt servo GPIO {TILT_GPIO}: {tilt_angle:.0f}° = {tilt_pulse}µs (duty={_pulse_to_duty(tilt_pulse):.2f}%)")
+    time.sleep(TILT_MOVE_TIME)  # let servo reach home position
+    _stop_tilt_pwm(tilt_pwm)    # stop PWM — no jitter
+    print(f"Tilt servo GPIO {TILT_GPIO}: {tilt_angle:.0f}° = {tilt_pulse}µs (PWM stopped)")
 
     # ── Init camera (picamera2 on Pi, OpenCV fallback) ────────
     picamera = None
@@ -134,6 +149,7 @@ def main() -> None:
     pan_pulse = NEUTRAL_US
     pan_step = 100  # µs per keypress
     tilt_step = 5.0  # degrees per keypress
+    tilt_moving_since: float | None = None  # timestamp when tilt PWM was last sent
 
     print("\nControls:")
     print("  Pan:  a/LEFT=left  d/RIGHT=right  s/SPACE=stop")
@@ -142,6 +158,13 @@ def main() -> None:
 
     try:
         while True:
+            # ── Check if tilt servo finished moving ──────────
+            if tilt_moving_since is not None:
+                if time.time() - tilt_moving_since >= TILT_MOVE_TIME:
+                    _stop_tilt_pwm(tilt_pwm)  # servo reached position — stop PWM
+                    tilt_moving_since = None
+                    print(f"  Tilt stopped (jitter-free)")
+
             # ── Read frame ───────────────────────────────────
             if picamera is not None:
                 frame = picamera.capture_array("main")
@@ -168,7 +191,8 @@ def main() -> None:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
             )
 
-            hud_tilt = f"Tilt GPIO{TILT_GPIO}  {tilt_angle:.0f}deg ({tilt_pulse}us)"
+            tilt_status = f"moving ({time.time() - tilt_moving_since:.1f}s)" if tilt_moving_since else "holding"
+            hud_tilt = f"Tilt GPIO{TILT_GPIO}  {tilt_angle:.0f}deg [{tilt_status}]"
             cv2.putText(
                 frame, hud_tilt, (10, 55),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
@@ -208,18 +232,21 @@ def main() -> None:
                 tilt_angle = _clamp(tilt_angle + tilt_step, TILT_MIN_DEG, TILT_MAX_DEG)
                 tilt_pulse = _angle_to_pulse(tilt_angle)
                 tilt_pwm.ChangeDutyCycle(_pulse_to_duty(tilt_pulse))
+                tilt_moving_since = time.time()  # start move timer
                 print(f"  Tilt UP   -> {tilt_angle:.0f} deg ({tilt_pulse} us)")
 
             elif key in (ord("x"), 84):  # DOWN — tilt towards 0°
                 tilt_angle = _clamp(tilt_angle - tilt_step, TILT_MIN_DEG, TILT_MAX_DEG)
                 tilt_pulse = _angle_to_pulse(tilt_angle)
                 tilt_pwm.ChangeDutyCycle(_pulse_to_duty(tilt_pulse))
+                tilt_moving_since = time.time()
                 print(f"  Tilt DOWN -> {tilt_angle:.0f} deg ({tilt_pulse} us)")
 
             elif key == ord("e"):  # CENTRE — tilt to 90°
                 tilt_angle = 90.0
                 tilt_pulse = _angle_to_pulse(tilt_angle)
                 tilt_pwm.ChangeDutyCycle(_pulse_to_duty(tilt_pulse))
+                tilt_moving_since = time.time()
                 print(f"  Tilt CENTRE -> {tilt_angle:.0f} deg ({tilt_pulse} us)")
 
     except KeyboardInterrupt:
