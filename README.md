@@ -66,12 +66,15 @@ The system is designed for the Raspberry Pi 5 (or 4) with a Pi Camera v2, but al
 | Pan-tilt bracket | 2-axis mount for SG90/MG90 servos | 1 |
 | Active buzzer | 5V, 400-1500 Hz | 1 |
 | 5V DC power supply | 4-5A output, regulated | 1 |
+| LM2596S buck converter | Step-down DC-DC converter, adjustable output | 1 |
 | IR LED ring (optional) | 850 nm wavelength, for low-light operation | 1 |
 | Jumper wires | Male-to-female and male-to-male, assorted | 1 pack |
 
 ### 3D-Printed Parts
 
 STL files for the pan/tilt bracket are included in the `model/` directory. The design is sourced from the [Super Ultra Compact Pan-Tilt Camera Mount v1](https://cults3d.com/en/3d-model/gadget/super-ultra-compact-pan-tilt-camera-mount-v1) by ZalophusDokdo. Print settings: PLA or PETG, 0.2mm layer height, 20-30% infill.
+
+A 3D-printed enclosure for the LM2596S buck converter is also used. The design is sourced from the [LM2596 Buck Converter Enclosure](https://www.thingiverse.com/thing:4096861) by Estep. This enclosure allows voltage measurement and adjustment without removing the cover, and requires 2 screws for mounting.
 
 ---
 
@@ -210,7 +213,7 @@ a.w.a.k.e/
 ├── tests/
 │   ├── test_eye_tracker.py  # 23 tests for EAR algorithm and PERCLOS
 │   └── test_calibration.py  # 10 tests for calibration threshold computation
-├── model/                   # 3D-printable STL files for pan/tilt bracket
+├── model/                   # 3D-printable STL files for pan/tilt bracket and buck converter enclosure
 ├── models/                  # MediaPipe model (auto-downloaded on first run)
 ├── logs/                    # Runtime logs (auto-created)
 ├── requirements.txt         # Python dependencies
@@ -402,11 +405,18 @@ STL files in the `model/` directory are sourced from Cults3D user ZalophusDokdo.
 Designer: ZalophusDokdo
 Source: https://cults3d.com/en/3d-model/gadget/super-ultra-compact-pan-tilt-camera-mount-v1
 
+### 3D Model: LM2596 Buck Converter Enclosure
+
+The enclosure for the LM2596S buck converter is sourced from Thingiverse user Estep.
+Designer: Estep
+Source: https://www.thingiverse.com/thing:4096861
+
 ---
 
 ## Acknowledgements
 
 - Google MediaPipe team for the FaceLandmarker model and Tasks API.
 - ZalophusDokdo for the pan/tilt bracket 3D model.
+- Estep for the LM2596S buck converter enclosure 3D model.
 - Raspberry Pi Foundation for camera and GPIO documentation.
 - Terek Soukupova and Jiri Cech for the Eye Aspect Ratio formula, as described in "Real-Time Detection of Driver Drowsiness using Machine Learning" (2016).
