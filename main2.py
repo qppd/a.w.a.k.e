@@ -21,11 +21,9 @@ import cv2
 
 # ── Pan servo constants ─────────────────────────────────────
 PAN_GPIO = 12
-PWM_FREQ_HZ = 50
-PWM_PERIOD_US = 1_000_000 // PWM_FREQ_HZ  # 20 000 µs
 PULSE_MIN_US = 500
 PULSE_MAX_US = 2500
-NEUTRAL_US = 1500
+NEUTRAL_US = 1500  # stop / centre for 360° continuous servo
 
 
 def main() -> None:
@@ -51,15 +49,15 @@ def main() -> None:
         sys.exit(1)
 
     lgpio.gpio_claim_output(chip, PAN_GPIO)
-    lgpio.gpio_pwm(chip, PAN_GPIO, PWM_FREQ_HZ, int(NEUTRAL_US / PWM_PERIOD_US * 1_000_000))
+    lgpio.tx_servo(chip, PAN_GPIO, NEUTRAL_US)
     print(f"Pan servo initialised on GPIO {PAN_GPIO} (pulse: {NEUTRAL_US}µs)")
 
     # ── Init camera ──────────────────────────────────────────
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
         print(f"ERROR: Cannot open camera {args.camera}")
-        lgpio.gpio_pwm_write(chip, PAN_GPIO, 0)  # stop pulse
-        lgpio.gpio_release(chip, PAN_GPIO)
+        lgpio.tx_servo(chip, PAN_GPIO, 0)  # stop pulse
+        lgpio.gpio_free(chip, PAN_GPIO)
         lgpio.gpiochip_close(chip)
         sys.exit(1)
 
@@ -107,15 +105,15 @@ def main() -> None:
                 break
             elif key in (ord("a"), 81):  # a or LEFT arrow
                 current_pulse = min(PULSE_MAX_US, current_pulse + step)
-                lgpio.gpio_pwm_write(chip, PAN_GPIO, int(current_pulse / PWM_PERIOD_US * 1_000_000))
+                lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
                 print(f"  Pan LEFT  → {current_pulse:.0f} µs")
             elif key in (ord("d"), 83):  # d or RIGHT arrow
                 current_pulse = max(PULSE_MIN_US, current_pulse - step)
-                lgpio.gpio_pwm_write(chip, PAN_GPIO, int(current_pulse / PWM_PERIOD_US * 1_000_000))
+                lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
                 print(f"  Pan RIGHT → {current_pulse:.0f} µs")
             elif key in (ord("s"), 32):  # s or SPACE
                 current_pulse = NEUTRAL_US
-                lgpio.gpio_pwm_write(chip, PAN_GPIO, int(current_pulse / PWM_PERIOD_US * 1_000_000))
+                lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
                 print(f"  Pan STOP  → {current_pulse:.0f} µs")
 
     except KeyboardInterrupt:
@@ -123,8 +121,8 @@ def main() -> None:
 
     finally:
         # ── Cleanup ──────────────────────────────────────────
-        lgpio.gpio_pwm_write(chip, PAN_GPIO, 0)  # stop pulse
-        lgpio.gpio_release(chip, PAN_GPIO)
+        lgpio.tx_servo(chip, PAN_GPIO, 0)  # stop pulse
+        lgpio.gpio_free(chip, PAN_GPIO)
         lgpio.gpiochip_close(chip)
         cap.release()
         cv2.destroyAllWindows()
