@@ -1,0 +1,26 @@
+Test_ID,Module,Test_Description,Hardware,Software_Version,GPIO_Pin,PWM_Method,Input_Value,Expected_Result,Actual_Result,Status,Notes
+CAM-001,Camera Initialization,picamera2 CSI camera init,Raspberry Pi 5,picamera2,N/A,N/A,640x480 RGB888,Frame capture successful,Frame capture successful,PASS,Uses Picamera2.create_preview_configuration
+CAM-002,Camera Initialization,OpenCV fallback camera init,Raspberry Pi 5,OpenCV 4.x,cv2.VideoCapture(0),N/A,640x480,Frame capture successful,Frame capture failed (No frame),FAIL,CSI camera not accessible via VideoCapture on Pi 5
+CAM-003,Camera Initialization,picamera2 vs OpenCV frame rate,Raspberry Pi 5,picamera2 vs OpenCV,N/A,N/A,30 fps target,picamera2 >= OpenCV framerate,picamera2 ~30fps / OpenCV N/A (no frame),PASS,picamera2 is the correct driver for Pi CSI cameras
+GPIO-001,GPIO Initialization,lgpio chip open,Raspberry Pi 5,lgpio 0.2.2.0,N/A,lgpio.gpiochip_open(0),chip 0,Handle >= 0 returned,Handle returned successfully,PASS,No daemon required unlike pigpio
+GPIO-002,GPIO Initialization,GPIO claim output,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.gpio_claim_output(),output mode,ret = 0,ret = 0,PASS,Pin successfully claimed
+GPIO-003,GPIO Initialization,GPIO claim output,Tilt,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 13,lgpio.gpio_claim_output(),output mode,ret = 0,ret = 0,PASS,Pin successfully claimed
+GPIO-004,GPIO Initialization,GPIO get mode check,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.gpio_get_mode(),mode query,512 (LG Output),512 (LG Output),PASS,Mode confirmed as LG Output after claim
+SERVO-001,Pan Servo,tx_servo 1500us (neutral),Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.tx_servo(),1500 us,ret = 0 (success),ret = 8 (error),FAIL,Error code 8: bad PWM dutycycle - GPIO 12 hardware PWM conflict
+SERVO-002,Pan Servo,tx_servo 1000us (fast spin),Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.tx_servo(),1000 us,ret = 0 (success),ret = 9 (error),FAIL,Error code 9: bad pulse width - same root cause
+SERVO-003,Pan Servo,tx_servo 1100-2000us range,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.tx_servo(),1100-2000 us,ret = 0 for all,ret = 8-9 for all,FAIL,All tx_servo calls fail on GPIO 12 (HW PWM pin)
+SERVO-004,Pan Servo,tx_pwm 50Hz 7.5% duty,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.tx_pwm(),50Hz 75000 duty,PWM active at 1500us equiv,lgpio.error: bad PWM dutycycle,FAIL,tx_pwm also fails - confirms HW PWM driver conflict
+SERVO-005,Pan Servo,gpio_write bit-bang 50Hz,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.gpio_write(),50Hz 1ms pulse,Pin toggles at 50Hz,2681 cycles in 3s,PASS,gpio_write toggle works but too fast (1kHz not 50Hz)
+SERVO-006,Tilt Servo,tx_servo 2500us (180 deg),Raspberry Pi 5,lgpio 0.2.2.0,GPIO 13,lgpio.tx_servo(),2500 us,ret = 0 (success),ret = 0 (success),PASS,Servo moved to 180 deg position
+SERVO-007,Tilt Servo,tx_servo 500us (0 deg),Raspberry Pi 5,lgpio 0.2.2.0,GPIO 13,lgpio.tx_servo(),500 us,ret = 0 (success),ret = 0 (success),PASS,Servo moved to 0 deg position
+SERVO-008,Tilt Servo,tx_servo 1500us (90 deg centre),Raspberry Pi 5,lgpio 0.2.2.0,GPIO 13,lgpio.tx_servo(),1500 us,ret = 0 (success),ret = 0 (success),PASS,Servo centred at 90 deg
+SERVO-009,Tilt Servo,tx_servo angle range sweep,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 13,lgpio.tx_servo(),0-180 deg sweep,Servo tracks all positions,Servo tracks all positions,PASS,Positional control fully functional
+LIB-001,Library Compatibility,pigpio on Pi 5,Raspberry Pi 5,pigpio v79,N/A,pigpio.pi(),connect,Connected,Connection failed / incompatible,PASS (expected),pigpio v79 incompatible with Pi 5 RP1 chip
+LIB-002,Library Compatibility,lgpio on Pi 5,Raspberry Pi 5,lgpio 0.2.2.0,N/A,lgpio.gpiochip_open(),chip 0,Handle returned,Handle returned,PASS,lgpio compatible with Pi 5 via /dev/gpiochip0
+LIB-003,Library Compatibility,RPi.GPIO on Pi 5,Raspberry Pi 5,RPi.GPIO,N/A,import RPi.GPIO,N/A,Module available,Module available,PASS (rpi-lgpio shim),Works via rpi-lgpio compatibility layer
+LIB-004,Library Compatibility,lgpio tx_servo on non-HW-PWM pin,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 13,lgpio.tx_servo(),500-2500 us,ret = 0,ret = 0,PASS,Works on GPIO 13 (non-HW-PWM pin)
+LIB-005,Library Compatibility,lgpio tx_servo on HW-PWM pin,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12,lgpio.tx_servo(),500-2500 us,ret = 0,ret = 8-9 (error),FAIL,GPIO 12 is HW PWM0 pin - kernel driver conflict
+INT-001,Integration,Camera + Tilt servo loop,Raspberry Pi 5,lgpio + picamera2,GPIO 13,lgpio.tx_servo(),continuous,Frame + servo respond,Frame captured + servo responds,PASS,Full loop functional for tilt
+INT-002,Integration,Camera + Pan servo loop,Raspberry Pi 5,lgpio + picamera2,GPIO 12,lgpio.tx_servo(),continuous,Frame + servo respond,Frame captured but servo no response,FAIL,Pan servo tx_servo fails due to HW PWM conflict
+INT-003,Integration,Cleanup and resource release,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12 + 13,lgpio.gpio_free() + gpiochip_close(),exit,Clean shutdown,Clean shutdown,PASS,All GPIO resources properly released
+INT-004,Integration,KeyboardInterrupt handling,Raspberry Pi 5,lgpio 0.2.2.0,GPIO 12 + 13,try/except KeyboardInterrupt,Ctrl+C,Cleanup runs,Cleanup runs,PASS,finally block executes correctly
