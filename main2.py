@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test script — Camera feed + Pan servo (GPIO 12) via pigpio.
+"""Test script — Camera feed + Pan servo (GPIO 12) via lgpio.
 
 Usage:
     python main2.py              # default camera 0
@@ -22,6 +22,7 @@ import cv2
 # ── Pan servo constants ─────────────────────────────────────
 PAN_GPIO = 12
 PWM_FREQ_HZ = 50
+PWM_PERIOD_US = 1_000_000 // PWM_FREQ_HZ  # 20 000 µs
 PULSE_MIN_US = 500
 PULSE_MAX_US = 2500
 NEUTRAL_US = 1500
@@ -34,31 +35,32 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=480, help="Frame height")
     args = parser.parse_args()
 
-    # ── Init pigpio ──────────────────────────────────────────
+    # ── Init lgpio ──────────────────────────────────────────
     try:
-        import pigpio
+        import lgpio
     except ImportError:
-        print("ERROR: pigpio not installed. Install with:")
-        print("  pip install pigpio")
+        print("ERROR: lgpio not installed. Install with:")
+        print("  pip install lgpio")
         sys.exit(1)
 
-    pi = pigpio.pi()
-    if not pi.connected:
-        print("ERROR: pigpio daemon not running. Start it with:")
-        print("  sudo pigpiod")
-        print("  # or: sudo systemctl start pigpiod")
+    try:
+        chip = lgpio.gpiochip_open(0)
+    except lgpio.error as exc:
+        print(f"ERROR: Cannot open GPIO chip: {exc}")
+        print("  Make sure you have permission (run with sudo if needed).")
         sys.exit(1)
 
-    pi.set_mode(PAN_GPIO, pigpio.OUTPUT)
-    pi.set_servo_pulsewidth(PAN_GPIO, NEUTRAL_US)
+    lgpio.gpio_claim_output(chip, PAN_GPIO)
+    lgpio.gpio_pwm(chip, PAN_GPIO, PWM_FREQ_HZ, int(NEUTRAL_US / PWM_PERIOD_US * 1_000_000))
     print(f"Pan servo initialised on GPIO {PAN_GPIO} (pulse: {NEUTRAL_US}µs)")
 
     # ── Init camera ──────────────────────────────────────────
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
         print(f"ERROR: Cannot open camera {args.camera}")
-        pi.set_servo_pulsewidth(PAN_GPIO, 0)
-        pi.stop()
+        lgpio.gpio_pwm_write(chip, PAN_GPIO, 0)  # stop pulse
+        lgpio.gpio_release(chip, PAN_GPIO)
+        lgpio.gpiochip_close(chip)
         sys.exit(1)
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
@@ -105,15 +107,15 @@ def main() -> None:
                 break
             elif key in (ord("a"), 81):  # a or LEFT arrow
                 current_pulse = min(PULSE_MAX_US, current_pulse + step)
-                pi.set_servo_pulsewidth(PAN_GPIO, current_pulse)
+                lgpio.gpio_pwm_write(chip, PAN_GPIO, int(current_pulse / PWM_PERIOD_US * 1_000_000))
                 print(f"  Pan LEFT  → {current_pulse:.0f} µs")
             elif key in (ord("d"), 83):  # d or RIGHT arrow
                 current_pulse = max(PULSE_MIN_US, current_pulse - step)
-                pi.set_servo_pulsewidth(PAN_GPIO, current_pulse)
+                lgpio.gpio_pwm_write(chip, PAN_GPIO, int(current_pulse / PWM_PERIOD_US * 1_000_000))
                 print(f"  Pan RIGHT → {current_pulse:.0f} µs")
             elif key in (ord("s"), 32):  # s or SPACE
                 current_pulse = NEUTRAL_US
-                pi.set_servo_pulsewidth(PAN_GPIO, current_pulse)
+                lgpio.gpio_pwm_write(chip, PAN_GPIO, int(current_pulse / PWM_PERIOD_US * 1_000_000))
                 print(f"  Pan STOP  → {current_pulse:.0f} µs")
 
     except KeyboardInterrupt:
@@ -121,8 +123,9 @@ def main() -> None:
 
     finally:
         # ── Cleanup ──────────────────────────────────────────
-        pi.set_servo_pulsewidth(PAN_GPIO, 0)  # release pulse
-        pi.stop()
+        lgpio.gpio_pwm_write(chip, PAN_GPIO, 0)  # stop pulse
+        lgpio.gpio_release(chip, PAN_GPIO)
+        lgpio.gpiochip_close(chip)
         cap.release()
         cv2.destroyAllWindows()
         print("Cleaned up. Bye!")
