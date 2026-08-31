@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Test script — Camera feed + Pan servo (GPIO 12) via lgpio.
+"""Test script — Camera feed + Pan/Tilt servo control via lgpio.
+
+GPIO pins (BCM):
+  Pan  → GPIO 12  — 360° continuous rotation servo (speed/direction via pulse)
+  Tilt → GPIO 13  — Standard positional servo (angle via pulse)
 
 Usage:
     python main2.py              # default camera 0
     python main2.py --camera 1   # specific camera index
 
 Controls (when window focused):
-    a / LEFT   → pan left
-    d / RIGHT  → pan right
-    s / SPACE  → stop pan (neutral)
+    a / LEFT   → pan left       w / UP     → tilt up
+    d / RIGHT  → pan right      x / DOWN   → tilt down
+    s / SPACE  → stop pan       e          → tilt to 90° (centre)
     q / ESC    → quit
 """
 from __future__ import annotations
@@ -23,15 +27,32 @@ if "/usr/lib/python3/dist-packages" not in sys.path:
 
 import cv2
 
-# ── Pan servo constants ─────────────────────────────────────
+# ── Servo constants ─────────────────────────────────────────
 PAN_GPIO = 12
+TILT_GPIO = 13
+
 PULSE_MIN_US = 500
 PULSE_MAX_US = 2500
-NEUTRAL_US = 1500  # stop / centre for 360° continuous servo
+NEUTRAL_US = 1500  # stop (360°) / centre (180°)
+
+# Tilt positional range (standard 180° servo)
+TILT_MIN_DEG = 0.0
+TILT_MAX_DEG = 180.0
+TILT_DEFAULT_DEG = 180.0  # front-facing home position
+
+
+def _angle_to_pulse(angle_deg: float) -> int:
+    """Convert physical servo angle (0-180°) to pulse width in µs."""
+    norm = (angle_deg - TILT_MIN_DEG) / (TILT_MAX_DEG - TILT_MIN_DEG)
+    return int(PULSE_MIN_US + norm * (PULSE_MAX_US - PULSE_MIN_US))
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Camera + Pan Servo test")
+    parser = argparse.ArgumentParser(description="Camera + Pan/Tilt Servo test")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (default: 0)")
     parser.add_argument("--width", type=int, default=640, help="Frame width")
     parser.add_argument("--height", type=int, default=480, help="Frame height")
@@ -52,20 +73,20 @@ def main() -> None:
         print("  Make sure you have permission (run with sudo if needed).")
         sys.exit(1)
 
-    print(f"GPIO chip opened: handle={chip}")
+    # ── Claim and initialise both servo GPIOs ────────────────
+    for gpio_pin in (PAN_GPIO, TILT_GPIO):
+        ret = lgpio.gpio_claim_output(chip, gpio_pin)
+        print(f"gpio_claim_output(GPIO {gpio_pin}): ret={ret}")
 
-    mode = lgpio.gpio_get_mode(chip, PAN_GPIO)
-    print(f"GPIO {PAN_GPIO} mode before claim: {mode}")
-
-    ret = lgpio.gpio_claim_output(chip, PAN_GPIO)
-    print(f"gpio_claim_output({PAN_GPIO}): returned {ret}")
-
-    mode = lgpio.gpio_get_mode(chip, PAN_GPIO)
-    print(f"GPIO {PAN_GPIO} mode after claim: {mode}")
-
+    # Pan servo: 360° continuous — start at neutral (stopped)
     ret = lgpio.tx_servo(chip, PAN_GPIO, NEUTRAL_US)
-    print(f"tx_servo({PAN_GPIO}, {NEUTRAL_US}µs): returned {ret}")
-    print(f"Pan servo initialised on GPIO {PAN_GPIO} (pulse: {NEUTRAL_US}µs)")
+    print(f"Pan  servo GPIO {PAN_GPIO}: pulse={NEUTRAL_US}µs (ret={ret})")
+
+    # Tilt servo: 180° positional — start at home (180° = front-facing)
+    tilt_angle = TILT_DEFAULT_DEG
+    tilt_pulse = _angle_to_pulse(tilt_angle)
+    ret = lgpio.tx_servo(chip, TILT_GPIO, tilt_pulse)
+    print(f"Tilt servo GPIO {TILT_GPIO}: {tilt_angle:.0f}° = {tilt_pulse}µs (ret={ret})")
 
     # ── Init camera (picamera2 on Pi, OpenCV fallback) ────────
     picamera = None
@@ -97,21 +118,30 @@ def main() -> None:
         if not cap.isOpened():
             print(f"ERROR: Cannot open camera {args.camera}")
             lgpio.tx_servo(chip, PAN_GPIO, 0)
+            lgpio.tx_servo(chip, TILT_GPIO, 0)
             lgpio.gpio_free(chip, PAN_GPIO)
+            lgpio.gpio_free(chip, TILT_GPIO)
             lgpio.gpiochip_close(chip)
             sys.exit(1)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
         print(f"Camera {args.camera} opened via OpenCV ({args.width}x{args.height})")
 
-    # ── Pan control state ────────────────────────────────────
-    current_pulse = NEUTRAL_US
-    step = 100  # µs per keypress
+    # ── Control state ────────────────────────────────────────
+    pan_pulse = NEUTRAL_US          # current pan pulse (360° servo: speed/direction)
+    pan_step = 100                  # µs per keypress
 
-    print("\nControls:  a/LEFT=pan left  d/RIGHT=pan right  s/SPACE=stop  q/ESC=quit\n")
+    # tilt_angle already set above; tilt_step in degrees
+    tilt_step = 5.0                 # degrees per keypress
+
+    print("\nControls:")
+    print("  Pan:  a/LEFT=left  d/RIGHT=right  s/SPACE=stop")
+    print("  Tilt: w/UP=up(180°)  x/DOWN=down(0°)  e=centre(90°)")
+    print("  Quit: q/ESC\n")
 
     try:
         while True:
+            # ── Read frame ───────────────────────────────────
             if picamera is not None:
                 frame = picamera.capture_array("main")
             else:
@@ -124,49 +154,84 @@ def main() -> None:
                 continue
 
             # ── HUD overlay ──────────────────────────────────
-            hud = f"Pan GPIO{PAN_GPIO}  Pulse: {current_pulse:.0f} us"
-            if current_pulse < NEUTRAL_US:
-                hud += "  [RIGHT]"
-            elif current_pulse > NEUTRAL_US:
-                hud += "  [LEFT]"
+            # Pan status
+            if pan_pulse < NEUTRAL_US:
+                pan_dir = "RIGHT"
+            elif pan_pulse > NEUTRAL_US:
+                pan_dir = "LEFT"
             else:
-                hud += "  [STOP]"
+                pan_dir = "STOP"
 
+            hud_pan = f"Pan  GPIO{PAN_GPIO}  {pan_pulse:.0f}us [{pan_dir}]"
             cv2.putText(
-                frame, hud, (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2,
-            )
-            cv2.putText(
-                frame, "a/d=pan  s=stop  q=quit", (10, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1,
+                frame, hud_pan, (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
             )
 
-            cv2.imshow("Pan Servo Test", frame)
+            # Tilt status
+            hud_tilt = f"Tilt GPIO{TILT_GPIO}  {tilt_angle:.0f}deg ({tilt_pulse}us)"
+            cv2.putText(
+                frame, hud_tilt, (10, 55),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
+            )
+
+            cv2.putText(
+                frame, "a/d=pan s=stop | w/x=tilt e=centre | q=quit", (10, 80),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1,
+            )
+
+            cv2.imshow("Pan/Tilt Servo Test", frame)
 
             key = cv2.waitKey(1) & 0xFF
 
-            if key in (ord("q"), 27):  # q or ESC
+            # ── Quit ─────────────────────────────────────────
+            if key in (ord("q"), 27):
                 break
-            elif key in (ord("a"), 81):  # a or LEFT arrow
-                current_pulse = min(PULSE_MAX_US, current_pulse + step)
-                ret = lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
-                print(f"  Pan LEFT  → {current_pulse:.0f} µs  (ret={ret})")
-            elif key in (ord("d"), 83):  # d or RIGHT arrow
-                current_pulse = max(PULSE_MIN_US, current_pulse - step)
-                ret = lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
-                print(f"  Pan RIGHT → {current_pulse:.0f} µs  (ret={ret})")
-            elif key in (ord("s"), 32):  # s or SPACE
-                current_pulse = NEUTRAL_US
-                ret = lgpio.tx_servo(chip, PAN_GPIO, int(current_pulse))
-                print(f"  Pan STOP  → {current_pulse:.0f} µs  (ret={ret})")
+
+            # ── Pan controls (360° continuous servo) ─────────
+            elif key in (ord("a"), 81):  # LEFT
+                pan_pulse = min(PULSE_MAX_US, pan_pulse + pan_step)
+                ret = lgpio.tx_servo(chip, PAN_GPIO, int(pan_pulse))
+                print(f"  Pan LEFT  -> {pan_pulse:.0f} us  (ret={ret})")
+
+            elif key in (ord("d"), 83):  # RIGHT
+                pan_pulse = max(PULSE_MIN_US, pan_pulse - pan_step)
+                ret = lgpio.tx_servo(chip, PAN_GPIO, int(pan_pulse))
+                print(f"  Pan RIGHT -> {pan_pulse:.0f} us  (ret={ret})")
+
+            elif key in (ord("s"), 32):  # STOP
+                pan_pulse = NEUTRAL_US
+                ret = lgpio.tx_servo(chip, PAN_GPIO, int(pan_pulse))
+                print(f"  Pan STOP  -> {pan_pulse:.0f} us  (ret={ret})")
+
+            # ── Tilt controls (180° positional servo) ────────
+            elif key in (ord("w"), 82):  # UP — tilt up (towards 180°)
+                tilt_angle = _clamp(tilt_angle + tilt_step, TILT_MIN_DEG, TILT_MAX_DEG)
+                tilt_pulse = _angle_to_pulse(tilt_angle)
+                ret = lgpio.tx_servo(chip, TILT_GPIO, tilt_pulse)
+                print(f"  Tilt UP   -> {tilt_angle:.0f} deg ({tilt_pulse} us)  (ret={ret})")
+
+            elif key in (ord("x"), 84):  # DOWN — tilt down (towards 0°)
+                tilt_angle = _clamp(tilt_angle - tilt_step, TILT_MIN_DEG, TILT_MAX_DEG)
+                tilt_pulse = _angle_to_pulse(tilt_angle)
+                ret = lgpio.tx_servo(chip, TILT_GPIO, tilt_pulse)
+                print(f"  Tilt DOWN -> {tilt_angle:.0f} deg ({tilt_pulse} us)  (ret={ret})")
+
+            elif key == ord("e"):  # CENTRE — tilt to 90°
+                tilt_angle = 90.0
+                tilt_pulse = _angle_to_pulse(tilt_angle)
+                ret = lgpio.tx_servo(chip, TILT_GPIO, tilt_pulse)
+                print(f"  Tilt CENTRE -> {tilt_angle:.0f} deg ({tilt_pulse} us)  (ret={ret})")
 
     except KeyboardInterrupt:
         print("\nInterrupted")
 
     finally:
         # ── Cleanup ──────────────────────────────────────────
-        lgpio.tx_servo(chip, PAN_GPIO, 0)  # stop pulse
+        lgpio.tx_servo(chip, PAN_GPIO, 0)   # stop pan pulse
+        lgpio.tx_servo(chip, TILT_GPIO, 0)  # stop tilt pulse
         lgpio.gpio_free(chip, PAN_GPIO)
+        lgpio.gpio_free(chip, TILT_GPIO)
         lgpio.gpiochip_close(chip)
         if picamera is not None:
             picamera.stop()
