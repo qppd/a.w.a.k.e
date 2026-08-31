@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Test script — Camera feed + Pan/Tilt servo control via RPi.GPIO.
+"""Test script — Camera feed + Pan/Tilt servo control.
 
 GPIO pins (BCM):
-  Pan  → GPIO 12  — 360° continuous rotation servo (speed/direction via PWM)
-  Tilt → GPIO 13  — Standard positional servo (angle via PWM)
+  Pan  → GPIO 12  — 360° continuous rotation servo (rpi-hardware-pwm)
+  Tilt → GPIO 13  — Standard positional servo (RPi.GPIO software PWM)
 
-Both use RPi.GPIO software PWM at 50 Hz.
-Tilt PWM is stopped after movement to eliminate jitter (servo holds via gear friction).
+Setup (one-time):
+  1. Add to /boot/firmware/config.txt:
+     dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
+  2. Reboot
+  3. pip install rpi-hardware-pwm
 
 Usage:
     python main3.py              # default camera 0
@@ -41,22 +44,18 @@ PULSE_MIN_US = 500
 PULSE_MAX_US = 2500
 NEUTRAL_US = 1500  # stop (360°) / centre (180°)
 
-# Tilt positional range (standard 180° servo)
 TILT_MIN_DEG = 0.0
 TILT_MAX_DEG = 180.0
-TILT_DEFAULT_DEG = 180.0  # front-facing home position
+TILT_DEFAULT_DEG = 180.0
 
-# Tilt jitter fix
-TILT_MOVE_TIME = 0.3  # seconds to wait for servo to reach position
+TILT_MOVE_TIME = 0.3
 
 
 def _pulse_to_duty(pulse_us: float) -> float:
-    """Convert pulse width in µs to PWM duty cycle (%)."""
     return pulse_us / PWM_PERIOD_US * 100.0
 
 
 def _angle_to_pulse(angle_deg: float) -> int:
-    """Convert physical servo angle (0-180°) to pulse width in µs."""
     norm = (angle_deg - TILT_MIN_DEG) / (TILT_MAX_DEG - TILT_MIN_DEG)
     return int(PULSE_MIN_US + norm * (PULSE_MAX_US - PULSE_MIN_US))
 
@@ -66,45 +65,49 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 
 def _stop_tilt_pwm(tilt_pwm) -> None:
-    """Stop tilt PWM signal to eliminate jitter."""
     tilt_pwm.ChangeDutyCycle(0)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Camera + Pan/Tilt Servo test (RPi.GPIO)")
+    parser = argparse.ArgumentParser(description="Camera + Pan/Tilt Servo test")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (default: 0)")
     parser.add_argument("--width", type=int, default=640, help="Frame width")
     parser.add_argument("--height", type=int, default=480, help="Frame height")
     args = parser.parse_args()
 
-    # ── Init RPi.GPIO ───────────────────────────────────────
+    # ── Init Pan servo (rpi-hardware-pwm on GPIO 12) ─────────
+    try:
+        from rpi_hardware_pwm import HardwarePWM
+    except ImportError:
+        print("ERROR: pip install rpi-hardware-pwm")
+        print("Also add to /boot/firmware/config.txt:")
+        print("  dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4")
+        sys.exit(1)
+
+    pan_pwm = HardwarePWM(pwm_channel=0, hz=PWM_FREQ_HZ, chip=0)
+    pan_duty = _pulse_to_duty(NEUTRAL_US)
+    pan_pwm.start(pan_duty)
+    print(f"Pan  GPIO {PAN_GPIO}: hardware PWM at {NEUTRAL_US}us (duty={pan_duty:.2f}%)")
+
+    # ── Init Tilt servo (RPi.GPIO on GPIO 13) ────────────────
     try:
         import RPi.GPIO as gpio
     except ImportError:
-        print("ERROR: RPi.GPIO not installed. Install with:")
-        print("  pip install RPi.GPIO")
-        print("  # or: pip install rpi-lgpio  (Pi 5 compatibility shim)")
+        print("ERROR: pip install RPi.GPIO  OR  pip install rpi-lgpio")
+        pan_pwm.stop()
         sys.exit(1)
 
     gpio.setmode(gpio.BCM)
-
-    # Pan — 360° continuous rotation servo (keeps PWM running)
-    gpio.setup(PAN_GPIO, gpio.OUT, initial=gpio.LOW)
-    pan_pwm = gpio.PWM(PAN_GPIO, PWM_FREQ_HZ)
-    pan_pwm.start(_pulse_to_duty(NEUTRAL_US))
-    print(f"Pan  servo GPIO {PAN_GPIO}: initialised at {NEUTRAL_US}µs (duty={_pulse_to_duty(NEUTRAL_US):.2f}%)")
-
-    # Tilt — 180° positional servo (PWM stopped after movement)
     gpio.setup(TILT_GPIO, gpio.OUT, initial=gpio.LOW)
     tilt_pwm = gpio.PWM(TILT_GPIO, PWM_FREQ_HZ)
     tilt_angle = TILT_DEFAULT_DEG
     tilt_pulse = _angle_to_pulse(tilt_angle)
     tilt_pwm.start(_pulse_to_duty(tilt_pulse))
-    time.sleep(TILT_MOVE_TIME)  # let servo reach home position
-    _stop_tilt_pwm(tilt_pwm)    # stop PWM — no jitter
-    print(f"Tilt servo GPIO {TILT_GPIO}: {tilt_angle:.0f}° = {tilt_pulse}µs (PWM stopped)")
+    time.sleep(TILT_MOVE_TIME)
+    _stop_tilt_pwm(tilt_pwm)
+    print(f"Tilt GPIO {TILT_GPIO}: {tilt_angle:.0f} deg = {tilt_pulse}us (stopped)")
 
-    # ── Init camera (picamera2 on Pi, OpenCV fallback) ────────
+    # ── Init camera ──────────────────────────────────────────
     picamera = None
     cap = None
 
@@ -124,9 +127,9 @@ def main() -> None:
             )
             picamera.configure(config)
             picamera.start()
-            print(f"picamera2 initialised ({args.width}x{args.height})")
+            print(f"picamera2 ({args.width}x{args.height})")
         except (ImportError, Exception) as exc:
-            print(f"picamera2 failed ({exc}) — falling back to OpenCV")
+            print(f"picamera2 failed ({exc})")
             picamera = None
 
     if picamera is None:
@@ -135,33 +138,28 @@ def main() -> None:
             print(f"ERROR: Cannot open camera {args.camera}")
             pan_pwm.stop()
             tilt_pwm.stop()
-            gpio.cleanup([PAN_GPIO, TILT_GPIO])
+            gpio.cleanup([TILT_GPIO])
             sys.exit(1)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-        print(f"Camera {args.camera} opened via OpenCV ({args.width}x{args.height})")
+        print(f"Camera {args.camera} via OpenCV ({args.width}x{args.height})")
 
-    # ── Control state ────────────────────────────────────────
+    # ── State ────────────────────────────────────────────────
     pan_pulse = NEUTRAL_US
-    pan_step = 100  # µs per keypress
-    tilt_step = 5.0  # degrees per keypress
+    pan_step = 100
+    tilt_step = 5.0
     tilt_moving_since: float | None = None
 
     print("\nControls:")
-    print("  Pan:  a/LEFT=left  d/RIGHT=right  s/SPACE=stop")
-    print("  Tilt: w/UP=up(180°)  x/DOWN=down(0°)  e=centre(90°)")
-    print("  Quit: q/ESC\n")
+    print("  a/d=pan  s=stop  |  w/x=tilt  e=centre  |  q=quit\n")
 
     try:
         while True:
-            # ── Check if tilt servo finished moving ──────────
             if tilt_moving_since is not None:
                 if time.time() - tilt_moving_since >= TILT_MOVE_TIME:
-                    _stop_tilt_pwm(tilt_pwm)  # servo reached position — stop PWM
+                    _stop_tilt_pwm(tilt_pwm)
                     tilt_moving_since = None
-                    print(f"  Tilt stopped (jitter-free)")
 
-            # ── Read frame ───────────────────────────────────
             if picamera is not None:
                 frame = picamera.capture_array("main")
             else:
@@ -169,101 +167,70 @@ def main() -> None:
                 if not ok:
                     frame = None
             if frame is None:
-                print("No frame, retrying...")
                 time.sleep(0.1)
                 continue
 
-            # ── HUD overlay ──────────────────────────────────
-            if pan_pulse < NEUTRAL_US:
-                pan_dir = "RIGHT"
-            elif pan_pulse > NEUTRAL_US:
-                pan_dir = "LEFT"
-            else:
-                pan_dir = "STOP"
+            # HUD
+            pan_dir = "RIGHT" if pan_pulse < NEUTRAL_US else ("LEFT" if pan_pulse > NEUTRAL_US else "STOP")
+            cv2.putText(frame, f"Pan  {PAN_GPIO} {pan_pulse:.0f}us [{pan_dir}]", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            ts = f"moving" if tilt_moving_since else "hold"
+            cv2.putText(frame, f"Tilt {TILT_GPIO} {tilt_angle:.0f}deg [{ts}]", (10, 55),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2)
+            cv2.putText(frame, "a/d=pan s=stop | w/x=tilt e=centre | q=quit", (10, 80),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
 
-            hud_pan = f"Pan  GPIO{PAN_GPIO}  {pan_pulse:.0f}us [{pan_dir}]"
-            cv2.putText(
-                frame, hud_pan, (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
-            )
-
-            tilt_status = f"moving ({time.time() - tilt_moving_since:.1f}s)" if tilt_moving_since else "holding"
-            hud_tilt = f"Tilt GPIO{TILT_GPIO}  {tilt_angle:.0f}deg [{tilt_status}]"
-            cv2.putText(
-                frame, hud_tilt, (10, 55),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2,
-            )
-
-            cv2.putText(
-                frame, "a/d=pan s=stop | w/x=tilt e=centre | q=quit", (10, 80),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1,
-            )
-
-            cv2.imshow("Pan/Tilt Servo Test (RPi.GPIO)", frame)
-
+            cv2.imshow("Pan/Tilt Test", frame)
             key = cv2.waitKey(1) & 0xFF
 
-            # ── Quit ─────────────────────────────────────────
             if key in (ord("q"), 27):
                 break
-
-            # ── Pan controls (360° continuous servo) ─────────
-            elif key in (ord("a"), 81):  # LEFT
+            elif key in (ord("a"), 81):
                 pan_pulse = min(PULSE_MAX_US, pan_pulse + pan_step)
-                pan_pwm.ChangeDutyCycle(_pulse_to_duty(pan_pulse))
-                print(f"  Pan LEFT  -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
-
-            elif key in (ord("d"), 83):  # RIGHT
+                pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
+                print(f"  Pan LEFT  -> {pan_pulse:.0f}us")
+            elif key in (ord("d"), 83):
                 pan_pulse = max(PULSE_MIN_US, pan_pulse - pan_step)
-                pan_pwm.ChangeDutyCycle(_pulse_to_duty(pan_pulse))
-                print(f"  Pan RIGHT -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
-
-            elif key in (ord("s"), 32):  # STOP
+                pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
+                print(f"  Pan RIGHT -> {pan_pulse:.0f}us")
+            elif key in (ord("s"), 32):
                 pan_pulse = NEUTRAL_US
-                pan_pwm.ChangeDutyCycle(_pulse_to_duty(pan_pulse))
-                print(f"  Pan STOP  -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
-
-            # ── Tilt controls (180° positional servo) ────────
-            elif key in (ord("w"), 82):  # UP — tilt towards 180°
+                pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
+                print(f"  Pan STOP  -> {pan_pulse:.0f}us")
+            elif key in (ord("w"), 82):
                 tilt_angle = _clamp(tilt_angle + tilt_step, TILT_MIN_DEG, TILT_MAX_DEG)
                 tilt_pulse = _angle_to_pulse(tilt_angle)
                 tilt_pwm.ChangeDutyCycle(_pulse_to_duty(tilt_pulse))
-                tilt_moving_since = time.time()  # start move timer
-                print(f"  Tilt UP   -> {tilt_angle:.0f} deg ({tilt_pulse} us)")
-
-            elif key in (ord("x"), 84):  # DOWN — tilt towards 0°
+                tilt_moving_since = time.time()
+                print(f"  Tilt UP   -> {tilt_angle:.0f}deg ({tilt_pulse}us)")
+            elif key in (ord("x"), 84):
                 tilt_angle = _clamp(tilt_angle - tilt_step, TILT_MIN_DEG, TILT_MAX_DEG)
                 tilt_pulse = _angle_to_pulse(tilt_angle)
                 tilt_pwm.ChangeDutyCycle(_pulse_to_duty(tilt_pulse))
                 tilt_moving_since = time.time()
-                print(f"  Tilt DOWN -> {tilt_angle:.0f} deg ({tilt_pulse} us)")
-
-            elif key == ord("e"):  # CENTRE — tilt to 90°
+                print(f"  Tilt DOWN -> {tilt_angle:.0f}deg ({tilt_pulse}us)")
+            elif key == ord("e"):
                 tilt_angle = 90.0
                 tilt_pulse = _angle_to_pulse(tilt_angle)
                 tilt_pwm.ChangeDutyCycle(_pulse_to_duty(tilt_pulse))
                 tilt_moving_since = time.time()
-                print(f"  Tilt CENTRE -> {tilt_angle:.0f} deg ({tilt_pulse} us)")
+                print(f"  Tilt CENTRE -> 90deg ({tilt_pulse}us)")
 
     except KeyboardInterrupt:
         print("\nInterrupted")
-
     finally:
-        # ── Cleanup ──────────────────────────────────────────
-        pan_pwm.ChangeDutyCycle(0)   # stop pan signal (pin goes LOW)
-        tilt_pwm.ChangeDutyCycle(0)  # stop tilt signal (pin goes LOW)
-        time.sleep(0.1)
         pan_pwm.stop()
+        tilt_pwm.ChangeDutyCycle(0)
+        time.sleep(0.1)
         tilt_pwm.stop()
-        gpio.output(PAN_GPIO, False)
         gpio.output(TILT_GPIO, False)
-        gpio.cleanup([PAN_GPIO, TILT_GPIO])
-        if picamera is not None:
+        gpio.cleanup([TILT_GPIO])
+        if picamera:
             picamera.stop()
-        if cap is not None:
+        if cap:
             cap.release()
         cv2.destroyAllWindows()
-        print("Cleaned up. Bye!")
+        print("Bye!")
 
 
 if __name__ == "__main__":
