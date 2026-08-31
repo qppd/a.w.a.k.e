@@ -26,9 +26,6 @@ logging.basicConfig(
 logger = logging.getLogger("awake2")
 
 
-FACE_LOCK_TIMEOUT = 5.0  # seconds before searching again after face lost
-
-
 class AwakeApp:
 
     def __init__(self) -> None:
@@ -40,10 +37,6 @@ class AwakeApp:
         self.alarm = Alarm()
         self._log_file = None
         self._log_writer = None
-        # Face lock-on state
-        self._face_locked = False          # True = locked onto a face
-        self._last_face = None             # last known FaceResult
-        self._face_lost_since: float = 0.0 # when face was last lost
 
     def run(self) -> None:
         logger.info("A.W.A.K.E. 2.0 starting …")
@@ -82,26 +75,6 @@ class AwakeApp:
 
             fps = fps_counter.tick()
             face = self.face_tracker.detect(frame)
-            now = time.time()
-
-            # ── Face lock-on logic ────────────────────────────
-            if face is not None:
-                # Face detected — lock onto it
-                self._face_locked = True
-                self._last_face = face
-                self._face_lost_since = 0.0
-            elif self._face_locked:
-                # Face temporarily lost — keep using last known position
-                face = self._last_face
-                if self._face_lost_since == 0.0:
-                    self._face_lost_since = now
-                # After timeout, unlock and start searching
-                if now - self._face_lost_since >= FACE_LOCK_TIMEOUT:
-                    self._face_locked = False
-                    self._last_face = None
-                    self._face_lost_since = 0.0
-                    self.pan_tilt.reset_tracking()
-                    face = None
 
             if face is not None:
                 self.pan_tilt.update(face.bbox_center, face.frame_size)
@@ -124,12 +97,11 @@ class AwakeApp:
                 self._log_row(fps, 0.0, 0.0, False, False)
 
             if CFG.headless and face is not None:
-                lock_str = " [LOCKED]" if self._face_locked and self._face_lost_since else ""
                 status = "DROWSY!" if is_drowsy else "Alert"
                 alarm_str = " [ALARM]" if self.alarm.is_active else ""
                 print(
                     f"\r  EAR={eye.ear:.3f}  PERCLOS={eye.perclos:.3f}  "
-                    f"FPS={fps:.0f}  [{status}]{alarm_str}{lock_str}    ",
+                    f"FPS={fps:.0f}  [{status}]{alarm_str}    ",
                     end="", flush=True,
                 )
 
