@@ -138,6 +138,7 @@ StandardError=journal
 Environment=DISPLAY=${DISPLAY_NUM}
 Environment=XAUTHORITY=/home/${REAL_USER}/.Xauthority
 Environment=HOME=/home/${REAL_USER}
+Environment=PYTHONPATH=${PROJECT_DIR}/src
 
 [Install]
 WantedBy=graphical.target

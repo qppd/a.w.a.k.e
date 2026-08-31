@@ -17,6 +17,7 @@ StandardError=journal
 Environment=DISPLAY=:1
 Environment=XAUTHORITY=/home/pi/.Xauthority
 Environment=HOME=/home/pi
+Environment=PYTHONPATH=/home/pi/a.w.a.k.e/src
 
 [Install]
 WantedBy=graphical.target
