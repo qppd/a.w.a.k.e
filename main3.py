@@ -159,8 +159,6 @@ def main() -> None:
     pan_step = 100  # µs per keypress
     tilt_step = 5.0  # degrees per keypress
     tilt_moving_since: float | None = None
-    pan_last_input_time: float = 0.0  # last time a pan key was pressed
-    PAN_STOP_DELAY = 0.15  # seconds after last keypress to send stop
 
     print("\nControls:")
     print("  Pan:  a/LEFT=left  d/RIGHT=right  s/SPACE=stop")
@@ -218,12 +216,6 @@ def main() -> None:
 
             key = cv2.waitKey(1) & 0xFF
 
-            # ── Pan: stop after no keypress for PAN_STOP_DELAY ─
-            if pan_pulse != NEUTRAL_US and (time.time() - pan_last_input_time) > PAN_STOP_DELAY:
-                pan_pulse = NEUTRAL_US
-                pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
-                print(f"  Pan STOP  -> {pan_pulse:.0f} us (auto-stop)")
-
             # ── Quit ─────────────────────────────────────────
             if key in (ord("q"), 27):
                 break
@@ -232,13 +224,11 @@ def main() -> None:
             elif key in (ord("a"), 81):  # LEFT
                 pan_pulse = min(PULSE_MAX_US, pan_pulse + pan_step)
                 pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
-                pan_last_input_time = time.time()
                 print(f"  Pan LEFT  -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
 
             elif key in (ord("d"), 83):  # RIGHT
                 pan_pulse = max(PULSE_MIN_US, pan_pulse - pan_step)
                 pan_pwm.change_duty_cycle(_pulse_to_duty(pan_pulse))
-                pan_last_input_time = time.time()
                 print(f"  Pan RIGHT -> {pan_pulse:.0f} us (duty={_pulse_to_duty(pan_pulse):.2f}%)")
 
             elif key in (ord("s"), 32):  # STOP
