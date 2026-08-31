@@ -126,14 +126,19 @@ class PanTilt:
         # If servo is still physically moving to the last target, wait
         if self._tilt_moving_since is not None:
             if now - self._tilt_moving_since >= CFG.tilt_move_time:
-                # Servo has had time to reach position — stop PWM signal
+                # Servo has had time to reach position — hold pulse
                 self._hold_tilt_position()
                 self._tilt_moving_since = None
                 self._tilt_cooldown_until = now + CFG.tilt_cooldown_seconds
+                logger.info("Tilt: reached %.1f° — holding", self._tilt_angle)
+            else:
+                logger.debug("Tilt: still moving to %.1f° …", self._tilt_angle)
             return  # either still moving or just finished — skip this frame
 
         # During cooldown, do not move or update the servo
         if now < self._tilt_cooldown_until:
+            remaining = self._tilt_cooldown_until - now
+            logger.debug("Tilt: cooldown %.1fs remaining — holding %.1f°", remaining, self._tilt_angle)
             return
 
         # Always compute the exact target angle from face position.
@@ -147,10 +152,17 @@ class PanTilt:
         )
 
         # Angle deadband — ignore tiny corrections to prevent oscillation
-        if abs(desired_angle - self._tilt_angle) < CFG.tilt_angle_deadband:
+        diff = abs(desired_angle - self._tilt_angle)
+        if diff < CFG.tilt_angle_deadband:
+            logger.debug("Tilt: error_y=%d  desired=%.1f°  current=%.1f°  diff=%.1f° < deadband %.1f° — hold", error_y, desired_angle, self._tilt_angle, diff, CFG.tilt_angle_deadband)
             return
+        logger.debug("Tilt: error_y=%d  desired=%.1f°  current=%.1f°  diff=%.1f° — will move", error_y, desired_angle, self._tilt_angle, diff)
 
         # Commit: command the servo to the new angle
+        logger.info(
+            "Tilt: error_y=%d  desired=%.1f°  current=%.1f°  moving",
+            error_y, desired_angle, self._tilt_angle,
+        )
         self._tilt_angle = desired_angle
         self._apply_tilt()
         self._tilt_moving_since = now
