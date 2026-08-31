@@ -19,8 +19,9 @@ class Config:
 
     pan_min_angle: float = -60.0
     pan_max_angle: float = 60.0
-    tilt_min_angle: float = -30.0
-    tilt_max_angle: float = 30.0
+    tilt_min_angle: float = 135.0   # minimum working angle (°)
+    tilt_max_angle: float = 175.0   # maximum working angle (°)
+    tilt_centre_angle: float = 165.0  # front-facing / home angle (°)
     servo_min_pulse_us: int = 500
     servo_max_pulse_us: int = 2500
 

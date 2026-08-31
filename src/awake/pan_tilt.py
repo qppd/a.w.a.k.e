@@ -38,7 +38,7 @@ class PanTilt:
         self._gpio = None
         self._pan_pwm = None
         self._tilt_pwm = None
-        self._tilt_angle: float = 180.0  # tilt starts at 180° (front-facing)
+        self._tilt_angle: float = CFG.tilt_centre_angle  # front-facing home angle
         self._has_gpio = False
         self._pigpio_pi = None  # pigpio instance for GPIO12 (HW PWM workaround)
         # Tilt servo stability: stop PWM after movement, cooldown, angle deadband
@@ -81,7 +81,7 @@ class PanTilt:
             # Tilt — standard positional servo
             gpio.setup(CFG.servo_tilt_gpio, gpio.OUT, initial=gpio.LOW)
             self._tilt_pwm = gpio.PWM(CFG.servo_tilt_gpio, PWM_FREQ_HZ)
-            self._tilt_pwm.start(_pulse_to_duty(_angle_to_pulse(180.0)))
+            self._tilt_pwm.start(_pulse_to_duty(_angle_to_pulse(CFG.tilt_centre_angle)))
 
             self._gpio = gpio
             self._has_gpio = True
@@ -142,13 +142,14 @@ class PanTilt:
             return
 
         # Always compute the exact target angle from face position.
-        # No pixel deadband here — even a centred face must correct
-        # the tilt if search() left it at a different angle.
+        # Map the full frame height to the servo's working range
+        # (tilt_min_angle .. tilt_max_angle), centred on tilt_centre_angle.
         half_frame = fh / 2.0
+        tilt_half_range = (CFG.tilt_max_angle - CFG.tilt_min_angle) / 2.0
         desired_angle = _clamp(
-            180.0 - (error_y / half_frame) * 30.0,  # ±30° around home
-            0.0,
-            180.0,
+            CFG.tilt_centre_angle - (error_y / half_frame) * tilt_half_range,
+            CFG.tilt_min_angle,
+            CFG.tilt_max_angle,
         )
 
         # Angle deadband — ignore tiny corrections to prevent oscillation
@@ -194,17 +195,18 @@ class PanTilt:
         if now < self._tilt_cooldown_until:
             return
 
-        # Tilt: sweep 90° ↔ 180° back and forth to find a face
-        tilt_sweep = 45 * math.sin(now * 0.3)          # −45 .. +45
-        target_tilt = _clamp(135.0 + tilt_sweep, 90.0, 180.0)
+        # Tilt: sweep within working range (135°–175°) back and forth
+        tilt_half_range = (CFG.tilt_max_angle - CFG.tilt_min_angle) / 2.0
+        tilt_sweep = tilt_half_range * math.sin(now * 0.3)
+        target_tilt = _clamp(CFG.tilt_centre_angle + tilt_sweep, CFG.tilt_min_angle, CFG.tilt_max_angle)
         if abs(self._tilt_angle - target_tilt) > 0.5:
             self._tilt_angle = target_tilt
             self._apply_tilt()
 
     def centre(self) -> None:
-        """Centre both servos — stop pan, tilt to 180° (front-facing)."""
+        """Centre both servos — stop pan, tilt to front-facing home angle."""
         self._set_pan_pulse(NEUTRAL_US)
-        self._tilt_angle = 180.0
+        self._tilt_angle = CFG.tilt_centre_angle
         self._apply_tilt()
 
     def release(self) -> None:
