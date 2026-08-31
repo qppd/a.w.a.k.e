@@ -26,8 +26,7 @@ class Config:
 
     pan_kp: float = 0.008
     tilt_kp: float = 0.008
-    pan_tilt_deadband: int = 15       # px — face must move this far before pan reacts
-    tilt_angle_deadband: float = 1.0  # ° — min angle change to trigger tilt servo
+    pan_tilt_deadband: int = 10       # px — face must move this far before servo reacts
 
     ear_threshold: float = 0.20
     closed_frame_threshold: int = 45

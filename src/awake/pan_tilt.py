@@ -30,7 +30,7 @@ PWM_PERIOD_US = 1_000_000 // PWM_FREQ_HZ   # 20 000 µs
 # ── Tilt positional range (standard servo) ─────────────────
 TILT_MIN_DEG = 0.0       # physical 0°
 TILT_MAX_DEG = 180.0     # physical 180°
-TILT_STEP_MAX = 1.0      # max degrees per frame for smooth movement
+TILT_STEP_MAX = 2.0      # max degrees per frame for smooth movement
 
 # ── Pan speed mapping (continuous rotation) ────────────────
 # Negative error → forward, positive error → reverse
@@ -99,27 +99,25 @@ class PanTilt:
             self._set_pan_pulse(NEUTRAL_US)
 
         # ── Tilt: positional servo — centre face vertically ────
-        # If face is vertically centred → stop PWM (lock position).
-        # Otherwise → move smoothly toward target (max 1° per frame).
-        if abs(error_y) < CFG.pan_tilt_deadband:
-            # Face is vertically centred — lock tilt, no jitter
-            self._stop_tilt_pwm()
+        # Compute target angle from vertical error.
+        # Move smoothly toward target. Hold position when centred.
+        half_frame = fh / 2.0
+        desired_angle = _clamp(
+            180.0 - (error_y / half_frame) * 30.0,  # ±30° around home
+            0.0,
+            180.0,
+        )
+
+        # Smooth movement: max TILT_STEP_MAX° per frame
+        diff = desired_angle - self._tilt_angle
+        if abs(diff) > TILT_STEP_MAX:
+            step = TILT_STEP_MAX if diff > 0 else -TILT_STEP_MAX
+            self._tilt_angle += step
         else:
-            # Face off-centre — compute target, move smoothly
-            half_frame = fh / 2.0
-            desired_angle = _clamp(
-                180.0 - (error_y / half_frame) * 30.0,  # ±30° around home
-                0.0,
-                180.0,
-            )
-            # Smooth movement: max 1° per frame toward target
-            diff = desired_angle - self._tilt_angle
-            if abs(diff) > TILT_STEP_MAX:
-                step = TILT_STEP_MAX if diff > 0 else -TILT_STEP_MAX
-                self._tilt_angle += step
-            else:
-                self._tilt_angle = desired_angle
-            self._apply_tilt()
+            self._tilt_angle = desired_angle
+
+        # Always apply — hold position (keeps servo locked)
+        self._apply_tilt()
 
     def search(self) -> None:
         """Sweep pan and tilt servos back and forth when no face detected.
