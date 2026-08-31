@@ -211,10 +211,6 @@ def main() -> None:
         help="Webcam index (default: 0)",
     )
     parser.add_argument(
-        "--source", type=str, default=None,
-        help="Video file path to use instead of a webcam",
-    )
-    parser.add_argument(
         "--samples", type=int, default=30,
         help="Number of samples per class during calibration (default: 30)",
     )
@@ -230,19 +226,12 @@ def main() -> None:
         "--headless", action="store_true",
         help="Run without display (SSH / Pi headless) — logs to terminal",
     )
-    parser.add_argument(
-        "--no-rotate", action="store_true",
-        help="Disable 180° frame rotation",
-    )
     args = parser.parse_args()
 
     CFG.camera_index = args.camera
     CFG.camera_width = args.width
     CFG.camera_height = args.height
     CFG.headless = args.headless
-    CFG.camera_rotate_180 = not args.no_rotate
-    if args.source:
-        CFG.camera_source = args.source
 
     if args.calibrate:
         from .calibration import Calibration
