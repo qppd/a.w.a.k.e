@@ -4,11 +4,10 @@ GPIO pins (BCM):
   Pan  → GPIO 12  — 360° continuous rotation servo (rpi-hardware-pwm)
   Tilt → GPIO 13  — Standard positional servo (RPi.GPIO software PWM)
 
-Setup (one-time on Pi 5):
-  1. Add to /boot/firmware/config.txt:
-     dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
-  2. Reboot
-  3. pip install rpi-hardware-pwm
+Improvements:
+  - Face position prediction (compensates ~100ms detection latency)
+  - Error smoothing (EMA filter prevents jerky movements)
+  - Adaptive deadband (tight when moving, wide when still)
 """
 from __future__ import annotations
 
@@ -22,35 +21,48 @@ logger = logging.getLogger(__name__)
 
 # ── PWM spec ───────────────────────────────────────────────
 PWM_FREQ_HZ   = 50       # 50 Hz standard servo PWM
-PULSE_MIN_US  = 500      # CFG.servo_min_pulse_us
-PULSE_MAX_US  = 2500     # CFG.servo_max_pulse_us
+PULSE_MIN_US  = 500
+PULSE_MAX_US  = 2500
 NEUTRAL_US    = 1500     # stop / centre for both servos
 PWM_PERIOD_US = 1_000_000 // PWM_FREQ_HZ   # 20 000 µs
 
-# ── Tilt positional range (standard servo) ─────────────────
-TILT_MIN_DEG = 0.0       # physical 0°
-TILT_MAX_DEG = 180.0     # physical 180°
-TILT_STEP_MAX = 2.0      # max degrees per frame for smooth movement
+# ── Tilt positional range ──────────────────────────────────
+TILT_MIN_DEG = 0.0
+TILT_MAX_DEG = 180.0
+TILT_STEP_MAX = 3.0      # max degrees per frame for smooth movement
 
-# ── Pan speed mapping (continuous rotation) ────────────────
-# Negative error → forward, positive error → reverse
-# Speed proportional to error, clamped to valid pulse range
+# ── Prediction & smoothing ─────────────────────────────────
+PREDICTION_LOOKAHEAD = 0.12   # predict 120ms ahead (detection latency)
+SMOOTHING_ALPHA = 0.4         # EMA filter: 0=instant, 1=never moves
+ADAPTIVE_DEADZONE_MOVING = 5  # px deadband when face is moving fast
+ADAPTIVE_DEADZONE_STILL = 15  # px deadband when face is still
 
 
 class PanTilt:
 
     def __init__(self) -> None:
         self._gpio = None
-        self._pan_pwm = None   # rpi-hardware-pwm instance for GPIO 12
+        self._pan_pwm = None
         self._tilt_pwm = None
-        self._tilt_angle: float = 180.0  # tilt starts at 180° (front-facing)
+        self._tilt_angle: float = 180.0
         self._has_gpio = False
         self._has_hw_pwm = False
+
+        # ── Prediction state ────────────────────────────────
+        self._prev_face_center: tuple[int, int] | None = None
+        self._prev_time: float = 0.0
+        self._face_vel_x: float = 0.0   # px/sec
+        self._face_vel_y: float = 0.0
+
+        # ── Smoothing state ─────────────────────────────────
+        self._smooth_error_x: float = 0.0
+        self._smooth_error_y: float = 0.0
+        self._has_previous: bool = False
 
     # ── Init ────────────────────────────────────────────────
 
     def init(self) -> None:
-        # ── Pan servo: rpi-hardware-pwm on GPIO 12 (Pi 5 HW PWM) ──
+        # ── Pan servo: rpi-hardware-pwm on GPIO 12 ──────────
         try:
             from rpi_hardware_pwm import HardwarePWM
             self._pan_pwm = HardwarePWM(pwm_channel=0, hz=PWM_FREQ_HZ, chip=2)
@@ -60,15 +72,13 @@ class PanTilt:
         except (ImportError, Exception) as exc:
             logger.warning("rpi-hardware-pwm unavailable (%s) — pan servo disabled", exc)
 
-        # ── Tilt servo: RPi.GPIO software PWM on GPIO 13 ──────────
+        # ── Tilt servo: RPi.GPIO on GPIO 13 ─────────────────
         try:
             import RPi.GPIO as gpio
             gpio.setmode(gpio.BCM)
-
             gpio.setup(CFG.servo_tilt_gpio, gpio.OUT, initial=gpio.LOW)
             self._tilt_pwm = gpio.PWM(CFG.servo_tilt_gpio, PWM_FREQ_HZ)
             self._tilt_pwm.start(_pulse_to_duty(_angle_to_pulse(180.0)))
-
             self._gpio = gpio
             self._has_gpio = True
             logger.info("Tilt servo initialised via RPi.GPIO (GPIO %d)", CFG.servo_tilt_gpio)
@@ -79,28 +89,65 @@ class PanTilt:
     # ── Public API ──────────────────────────────────────────
 
     def update(self, face_center: tuple[int, int], frame_size: tuple[int, int]) -> None:
-        """Move servos to track the face centre.
+        """Track face centre with prediction and smoothing.
 
-        Pan (continuous rotation): speed proportional to horizontal error.
-        Tilt (positional): angle proportional to vertical error.
+        1. Compute raw error from face position
+        2. Predict future position (compensate detection latency)
+        3. Smooth the error (EMA filter)
+        4. Apply proportional control with adaptive deadband
         """
+        now = time.time()
         fw, fh = frame_size
         fcx, fcy = face_center
-        error_x = fcx - fw // 2
-        error_y = fcy - fh // 2
 
-        # ── Pan: continuous rotation — speed from error_x ──
-        # Face right of centre (error > 0) → pan right → pulse < 1500
-        # Face left of centre  (error < 0) → pan left  → pulse > 1500
-        if abs(error_x) > CFG.pan_tilt_deadband:
+        # ── Step 1: Compute velocity ────────────────────────
+        if self._prev_face_center is not None and self._prev_time > 0:
+            dt = now - self._prev_time
+            if dt > 0:
+                # Exponential smoothing on velocity (prevents spikes)
+                alpha_v = 0.3
+                raw_vx = (fcx - self._prev_face_center[0]) / dt
+                raw_vy = (fcy - self._prev_face_center[1]) / dt
+                self._face_vel_x = alpha_v * raw_vx + (1 - alpha_v) * self._face_vel_x
+                self._face_vel_y = alpha_v * raw_vy + (1 - alpha_v) * self._face_vel_y
+
+        self._prev_face_center = face_center
+        self._prev_time = now
+
+        # ── Step 2: Predict future face position ────────────
+        pred_cx = fcx + self._face_vel_x * PREDICTION_LOOKAHEAD
+        pred_cy = fcy + self._face_vel_y * PREDICTION_LOOKAHEAD
+
+        # Raw error = predicted position − frame centre
+        raw_error_x = pred_cx - fw // 2
+        raw_error_y = pred_cy - fh // 2
+
+        # ── Step 3: Smooth error (EMA filter) ───────────────
+        if not self._has_previous:
+            self._smooth_error_x = raw_error_x
+            self._smooth_error_y = raw_error_y
+            self._has_previous = True
+        else:
+            self._smooth_error_x = SMOOTHING_ALPHA * raw_error_x + (1 - SMOOTHING_ALPHA) * self._smooth_error_x
+            self._smooth_error_y = SMOOTHING_ALPHA * raw_error_y + (1 - SMOOTHING_ALPHA) * self._smooth_error_y
+
+        error_x = self._smooth_error_x
+        error_y = self._smooth_error_y
+
+        # ── Step 4: Adaptive deadband ───────────────────────
+        speed = math.hypot(self._face_vel_x, self._face_vel_y)
+        # Interpolate deadband: fast face → small deadband, still face → large deadband
+        speed_clamped = min(speed / 200.0, 1.0)  # normalize: 200px/s = full speed
+        deadband = ADAPTIVE_DEADZONE_STILL - speed_clamped * (ADAPTIVE_DEADZONE_STILL - ADAPTIVE_DEADZONE_MOVING)
+
+        # ── Pan: continuous rotation ─────────────────────────
+        if abs(error_x) > deadband:
             pan_pulse = _error_to_pan_pulse(error_x, fw)
             self._set_pan_pulse(pan_pulse)
         else:
             self._set_pan_pulse(NEUTRAL_US)
 
-        # ── Tilt: positional servo — centre face vertically ────
-        # Compute target angle from vertical error.
-        # Move smoothly toward target. Hold position when centred.
+        # ── Tilt: positional servo ──────────────────────────
         half_frame = fh / 2.0
         desired_angle = _clamp(
             180.0 - (error_y / half_frame) * 30.0,  # ±30° around home
@@ -108,7 +155,7 @@ class PanTilt:
             180.0,
         )
 
-        # Smooth movement: max TILT_STEP_MAX° per frame
+        # Smooth movement toward target
         diff = desired_angle - self._tilt_angle
         if abs(diff) > TILT_STEP_MAX:
             step = TILT_STEP_MAX if diff > 0 else -TILT_STEP_MAX
@@ -116,14 +163,21 @@ class PanTilt:
         else:
             self._tilt_angle = desired_angle
 
-        # Always apply — hold position (keeps servo locked)
+        # Always hold position (keeps servo locked)
         self._apply_tilt()
 
-    def search(self) -> None:
-        """Sweep pan and tilt servos back and forth when no face detected.
+    def reset_tracking(self) -> None:
+        """Reset prediction state (call when face is lost)."""
+        self._prev_face_center = None
+        self._prev_time = 0.0
+        self._face_vel_x = 0.0
+        self._face_vel_y = 0.0
+        self._smooth_error_x = 0.0
+        self._smooth_error_y = 0.0
+        self._has_previous = False
 
-        Both servos sweep slowly to find a face.
-        """
+    def search(self) -> None:
+        """Sweep pan and tilt servos back and forth when no face detected."""
         now = time.time()
 
         # Pan: continuous rotation sweep
@@ -131,30 +185,28 @@ class PanTilt:
         pan_pulse = NEUTRAL_US + (pan_sweep / 60.0) * (PULSE_MAX_US - NEUTRAL_US)
         self._set_pan_pulse(pan_pulse)
 
-        # Tilt: sweep 120° ↔ 180° back and forth to find a face
-        tilt_sweep = 30 * math.sin(now * 0.3)          # −30 .. +30
+        # Tilt: sweep 120° ↔ 180° back and forth
+        tilt_sweep = 30 * math.sin(now * 0.3)
         target_tilt = _clamp(150.0 + tilt_sweep, 120.0, 180.0)
         self._tilt_angle = target_tilt
         self._apply_tilt()
 
     def centre(self) -> None:
-        """Centre both servos — stop pan, tilt to 180° (front-facing)."""
+        """Centre both servos."""
         self._set_pan_pulse(NEUTRAL_US)
         self._tilt_angle = 180.0
         self._apply_tilt()
 
     def release(self) -> None:
         """Stop PWM and release GPIO."""
-        # Stop pan servo (hardware PWM)
         if self._has_hw_pwm and self._pan_pwm is not None:
             self._pan_pwm.stop()
             self._pan_pwm = None
             self._has_hw_pwm = False
 
-        # Stop tilt servo (software PWM)
         if self._has_gpio and self._gpio is not None:
             if self._tilt_pwm is not None:
-                self._tilt_pwm.ChangeDutyCycle(0)  # stop signal
+                self._tilt_pwm.ChangeDutyCycle(0)
                 time.sleep(0.1)
                 self._tilt_pwm.stop()
                 self._tilt_pwm = None
@@ -165,61 +217,44 @@ class PanTilt:
     # ── Private helpers ─────────────────────────────────────
 
     def _set_pan_pulse(self, pulse_us: float) -> None:
-        """Set pan servo pulse width (continuous rotation: speed/direction)."""
         clamped = _clamp(pulse_us, PULSE_MIN_US, PULSE_MAX_US)
         if self._has_hw_pwm and self._pan_pwm is not None:
             self._pan_pwm.change_duty_cycle(_pulse_to_duty(clamped))
 
     def _apply_tilt(self) -> None:
-        """Apply current tilt angle to the servo."""
         pulse = _angle_to_pulse(self._tilt_angle)
         duty = _pulse_to_duty(pulse)
         if self._has_gpio and self._tilt_pwm is not None:
             self._tilt_pwm.ChangeDutyCycle(duty)
 
-    def _stop_tilt_pwm(self) -> None:
-        """Stop tilt PWM signal to eliminate servo jitter.
-
-        Setting duty cycle to 0 keeps the GPIO pin LOW (no pulses).
-        The MG90S holds its position mechanically via gear friction.
-        """
-        if self._has_gpio and self._tilt_pwm is not None:
-            self._tilt_pwm.ChangeDutyCycle(0)
-
     @property
     def angles(self) -> tuple[float, float]:
-        """Return (pan_pulse_us, tilt_angle_deg)."""
         return 0.0, self._tilt_angle
 
 
 # ── Module-level helpers ────────────────────────────────────
 
 def _pulse_to_duty(pulse_us: float) -> float:
-    """Convert pulse width in µs → PWM duty cycle (%)."""
     return pulse_us / PWM_PERIOD_US * 100.0
 
 
 def _angle_to_pulse(angle: float) -> int:
-    """Convert physical servo angle (0–180°) → pulse width in µs."""
     norm = (angle - TILT_MIN_DEG) / (TILT_MAX_DEG - TILT_MIN_DEG)
     return int(PULSE_MIN_US + norm * (PULSE_MAX_US - PULSE_MIN_US))
 
 
-def _error_to_pan_pulse(error_x: int, frame_width: int) -> float:
+def _error_to_pan_pulse(error_x: float, frame_width: int) -> float:
     """Convert horizontal pixel error to pan servo pulse width.
 
-    error_x > 0 → face right → pan right → pulse < 1500 (spin right)
-    error_x < 0 → face left  → pan left  → pulse > 1500 (spin left)
+    error_x > 0 → face right → pan right → pulse < 1500
+    error_x < 0 → face left  → pan left  → pulse > 1500
     """
     max_error = frame_width / 2
     norm = max(-1.0, min(1.0, error_x / max_error))
 
-    # Asymmetric range: reverse (left) needs wider offset to overcome friction
     if norm >= 0:
-        # Pan right: 1300 → 500 µs
         return 1300.0 - norm * 800.0
     else:
-        # Pan left: 1800 → 2500 µs (wider range to overcome friction)
         return 1800.0 + abs(norm) * 700.0
 
 
