@@ -121,20 +121,20 @@ REAL_USER="${SUDO_USER:-pi}"
 
 cat > "${SERVICE_FILE}" << EOF
 [Unit]
-Description=A.W.A.K.E. 2.0 — Drowsiness Detection
+Description=A.W.A.K.E. 2.0 — Drowsiness Detection (VNC)
 After=graphical.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=${PROJECT_DIR}
+ExecStartPre=/bin/sleep 10
 ExecStart=${VENV_PYTHON} -m awake.main
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-# Display environment (VNC) — update DISPLAY if needed
 Environment=DISPLAY=${DISPLAY_NUM}
 Environment=XAUTHORITY=/home/${REAL_USER}/.Xauthority
 Environment=HOME=/home/${REAL_USER}
