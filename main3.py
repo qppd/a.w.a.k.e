@@ -84,7 +84,7 @@ def main() -> None:
         print("  dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4")
         sys.exit(1)
 
-    pan_pwm = HardwarePWM(pwm_channel=0, hz=PWM_FREQ_HZ, chip=0)
+    pan_pwm = HardwarePWM(pwm_channel=0, hz=PWM_FREQ_HZ, chip=2)  # Pi 5: GPIO 12 is on PWM chip 2
     pan_duty = _pulse_to_duty(NEUTRAL_US)
     pan_pwm.start(pan_duty)
     print(f"Pan  GPIO {PAN_GPIO}: hardware PWM at {NEUTRAL_US}us (duty={pan_duty:.2f}%)")

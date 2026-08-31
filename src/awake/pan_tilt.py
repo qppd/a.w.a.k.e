@@ -1,10 +1,14 @@
 """A.W.A.K.E. 2.0 — Pan/Tilt Servo Control Module
 
 GPIO pins (BCM):
-  Pan  → GPIO 12  — 360° continuous rotation servo (speed/direction via PWM)
-  Tilt → GPIO 13  — Standard positional servo (angle via PWM)
+  Pan  → GPIO 12  — 360° continuous rotation servo (rpi-hardware-pwm)
+  Tilt → GPIO 13  — Standard positional servo (RPi.GPIO software PWM)
 
-Both use RPi.GPIO software PWM at 50 Hz.
+Setup (one-time on Pi 5):
+  1. Add to /boot/firmware/config.txt:
+     dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
+  2. Reboot
+  3. pip install rpi-hardware-pwm
 """
 from __future__ import annotations
 
@@ -36,11 +40,11 @@ class PanTilt:
 
     def __init__(self) -> None:
         self._gpio = None
-        self._pan_pwm = None
+        self._pan_pwm = None   # rpi-hardware-pwm instance for GPIO 12
         self._tilt_pwm = None
         self._tilt_angle: float = 180.0  # tilt starts at 180° (front-facing)
         self._has_gpio = False
-        self._pigpio_pi = None  # pigpio instance for GPIO12 (HW PWM workaround)
+        self._has_hw_pwm = False
         # Tilt servo stability: stop PWM after movement, cooldown, angle deadband
         self._tilt_cooldown_until: float = 0.0
         self._tilt_moving_since: float | None = None
@@ -48,52 +52,30 @@ class PanTilt:
     # ── Init ────────────────────────────────────────────────
 
     def init(self) -> None:
-        # ── Try pigpio first for the pan servo (GPIO 12) ──────────
-        # GPIO 12 is a hardware-PWM pin; RPi.GPIO HW-PWM can produce
-        # inaccurate pulse widths that prevent continuous-rotation
-        # servos from responding.  pigpio gives cycle-accurate output.
+        # ── Pan servo: rpi-hardware-pwm on GPIO 12 (Pi 5 HW PWM) ──
         try:
-            import pigpio
-            pi = pigpio.pi()
-            if pi.connected:
-                self._pigpio_pi = pi
-                pi.set_mode(CFG.servo_pan_gpio, pigpio.OUTPUT)
-                pi.set_servo_pulsewidth(CFG.servo_pan_gpio, NEUTRAL_US)
-                logger.info(
-                    "Pan servo initialised via pigpio (GPIO %d)",
-                    CFG.servo_pan_gpio,
-                )
-            else:
-                logger.warning("pigpio daemon not running — will fall back to RPi.GPIO")
-        except (ImportError, OSError):
-            logger.debug("pigpio not available — will use RPi.GPIO for pan")
+            from rpi_hardware_pwm import HardwarePWM
+            self._pan_pwm = HardwarePWM(pwm_channel=0, hz=PWM_FREQ_HZ, chip=2)
+            self._pan_pwm.start(_pulse_to_duty(NEUTRAL_US))
+            self._has_hw_pwm = True
+            logger.info("Pan servo initialised via rpi-hardware-pwm (GPIO %d)", CFG.servo_pan_gpio)
+        except (ImportError, Exception) as exc:
+            logger.warning("rpi-hardware-pwm unavailable (%s) — pan servo disabled", exc)
 
+        # ── Tilt servo: RPi.GPIO software PWM on GPIO 13 ──────────
         try:
             import RPi.GPIO as gpio
             gpio.setmode(gpio.BCM)
 
-            # Pan — continuous rotation servo (only if pigpio not used)
-            if self._pigpio_pi is None:
-                gpio.setup(CFG.servo_pan_gpio, gpio.OUT, initial=gpio.LOW)
-                self._pan_pwm = gpio.PWM(CFG.servo_pan_gpio, PWM_FREQ_HZ)
-                self._pan_pwm.start(_pulse_to_duty(NEUTRAL_US))
-
-            # Tilt — standard positional servo
             gpio.setup(CFG.servo_tilt_gpio, gpio.OUT, initial=gpio.LOW)
             self._tilt_pwm = gpio.PWM(CFG.servo_tilt_gpio, PWM_FREQ_HZ)
             self._tilt_pwm.start(_pulse_to_duty(_angle_to_pulse(180.0)))
 
             self._gpio = gpio
             self._has_gpio = True
-            logger.info(
-                "PanTilt initialised (pan=%d via %s, tilt=%d via RPi.GPIO)",
-                CFG.servo_pan_gpio,
-                "pigpio" if self._pigpio_pi else "RPi.GPIO",
-                CFG.servo_tilt_gpio,
-            )
+            logger.info("Tilt servo initialised via RPi.GPIO (GPIO %d)", CFG.servo_tilt_gpio)
         except (ImportError, RuntimeError) as exc:
-            if self._pigpio_pi is None:
-                logger.warning("RPi.GPIO unavailable (%s) — using simulation mode", exc)
+            logger.warning("RPi.GPIO unavailable (%s) — tilt servo disabled", exc)
             self._has_gpio = False
 
     # ── Public API ──────────────────────────────────────────
@@ -183,32 +165,21 @@ class PanTilt:
 
     def release(self) -> None:
         """Stop PWM and release GPIO."""
-        # Stop pan servo
-        if self._pigpio_pi is not None:
-            self._pigpio_pi.set_servo_pulsewidth(CFG.servo_pan_gpio, 0)  # release pulse
-            self._pigpio_pi.stop()
-            self._pigpio_pi = None
-        elif self._has_gpio and self._pan_pwm is not None:
-            self._pan_pwm.ChangeDutyCycle(_pulse_to_duty(NEUTRAL_US))
+        # Stop pan servo (hardware PWM)
+        if self._has_hw_pwm and self._pan_pwm is not None:
+            self._pan_pwm.stop()
+            self._pan_pwm = None
+            self._has_hw_pwm = False
 
+        # Stop tilt servo (software PWM)
         if self._has_gpio and self._gpio is not None:
-            # Centre tilt
             if self._tilt_pwm is not None:
-                self._tilt_pwm.ChangeDutyCycle(_pulse_to_duty(NEUTRAL_US))
-
-            import time
-            time.sleep(0.1)
-
-            if self._pan_pwm is not None:
-                self._pan_pwm.stop()
-                self._pan_pwm = None
-            if self._tilt_pwm is not None:
+                self._tilt_pwm.ChangeDutyCycle(0)  # stop signal
+                time.sleep(0.1)
                 self._tilt_pwm.stop()
                 self._tilt_pwm = None
-
-            self._gpio.output(CFG.servo_pan_gpio, False)
             self._gpio.output(CFG.servo_tilt_gpio, False)
-            self._gpio.cleanup([CFG.servo_pan_gpio, CFG.servo_tilt_gpio])
+            self._gpio.cleanup([CFG.servo_tilt_gpio])
         logger.info("PanTilt released")
 
     # ── Private helpers ─────────────────────────────────────
@@ -216,11 +187,8 @@ class PanTilt:
     def _set_pan_pulse(self, pulse_us: float) -> None:
         """Set pan servo pulse width (continuous rotation: speed/direction)."""
         clamped = _clamp(pulse_us, PULSE_MIN_US, PULSE_MAX_US)
-        if self._pigpio_pi is not None:
-            self._pigpio_pi.set_servo_pulsewidth(CFG.servo_pan_gpio, clamped)
-        elif self._has_gpio and self._pan_pwm is not None:
-            duty = _pulse_to_duty(clamped)
-            self._pan_pwm.ChangeDutyCycle(duty)
+        if self._has_hw_pwm and self._pan_pwm is not None:
+            self._pan_pwm.change_duty_cycle(_pulse_to_duty(clamped))
 
     def _apply_tilt(self) -> None:
         """Apply current tilt angle to the servo."""
