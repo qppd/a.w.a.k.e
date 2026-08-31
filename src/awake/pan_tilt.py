@@ -45,6 +45,7 @@ class PanTilt:
         self._tilt_cooldown_until: float = 0.0
         self._tilt_moving_since: float | None = None
         self._face_last_seen: float = 0.0  # timestamp of last face detection
+        self._tilt_target_angle: float | None = None  # smoothed target angle for smooth stepping
 
     # ── Init ────────────────────────────────────────────────
 
@@ -103,7 +104,7 @@ class PanTilt:
         """Move servos to track the face centre.
 
         Pan (continuous rotation): speed proportional to horizontal error.
-        Tilt (positional): angle proportional to vertical error.
+        Tilt (positional): slowly and smoothly steps toward the target angle.
         """
         fw, fh = frame_size
         fcx, fcy = face_center
@@ -119,57 +120,62 @@ class PanTilt:
         else:
             self._set_pan_pulse(NEUTRAL_US)
 
-        # ── Tilt: positional servo — centre face vertically ────
-        # Directly compute the target angle that puts the face at frame centre,
-        # then move the servo there in one step.
+        # ── Tilt: positional servo — smooth, slow stepping ────
         now = time.time()
 
-        # If servo is still physically moving to the last target, wait
-        if self._tilt_moving_since is not None:
-            if now - self._tilt_moving_since >= CFG.tilt_move_time:
-                # Servo has had time to reach position — hold pulse
-                self._hold_tilt_position()
-                self._tilt_moving_since = None
-                self._tilt_cooldown_until = now + CFG.tilt_cooldown_seconds
-                logger.info("Tilt: reached %.1f° — holding", self._tilt_angle)
-            else:
-                logger.debug("Tilt: still moving to %.1f° …", self._tilt_angle)
-            return  # either still moving or just finished — skip this frame
-
-        # During cooldown, do not move or update the servo
-        if now < self._tilt_cooldown_until:
-            remaining = self._tilt_cooldown_until - now
-            logger.debug("Tilt: cooldown %.1fs remaining — holding %.1f°", remaining, self._tilt_angle)
-            return
-
-        # Map frame position to servo angle.
+        # Map frame position to raw desired angle.
         # Bottom of frame (error_y > 0) → 165° (front-facing)
         # Top of frame    (error_y < 0) → 135°
         half_frame = fh / 2.0
         tilt_half_range = (CFG.tilt_max_angle - CFG.tilt_min_angle) / 2.0
-        desired_angle = _clamp(
+        raw_desired = _clamp(
             CFG.tilt_centre_angle + (error_y / half_frame) * tilt_half_range,
             CFG.tilt_min_angle,
             CFG.tilt_max_angle,
         )
 
-        # Angle deadband — ignore tiny corrections, disconnect servo to rest
-        diff = abs(desired_angle - self._tilt_angle)
-        if diff < CFG.tilt_angle_deadband:
+        # Exponential smoothing: blend raw desired with previous target
+        # to filter out frame-to-frame jitter
+        if self._tilt_target_angle is None:
+            self._tilt_target_angle = raw_desired
+        else:
+            alpha = CFG.tilt_smooth_alpha
+            self._tilt_target_angle = (
+                alpha * raw_desired + (1.0 - alpha) * self._tilt_target_angle
+            )
+
+        # Clamp the smoothed target to valid range
+        self._tilt_target_angle = _clamp(
+            self._tilt_target_angle,
+            CFG.tilt_min_angle,
+            CFG.tilt_max_angle,
+        )
+
+        # Calculate how far we need to move
+        diff = self._tilt_target_angle - self._tilt_angle
+
+        # Angle deadband — ignore tiny corrections
+        if abs(diff) < CFG.tilt_angle_deadband:
             self._face_last_seen = now
             self._disconnect_tilt()  # stop PWM completely — servo rests
-            logger.debug("Tilt: error_y=%d  desired=%.1f°  current=%.1f°  diff=%.1f° < deadband — disconnected", error_y, desired_angle, self._tilt_angle, diff)
+            logger.debug(
+                "Tilt: target=%.1f°  current=%.1f°  diff=%.1f° < deadband — holding",
+                self._tilt_target_angle, self._tilt_angle, diff,
+            )
             return
-        logger.debug("Tilt: error_y=%d  desired=%.1f°  current=%.1f°  diff=%.1f° — will move", error_y, desired_angle, self._tilt_angle, diff)
 
-        # Commit: command the servo to the new angle
-        logger.info(
-            "Tilt: error_y=%d  desired=%.1f°  current=%.1f°  moving",
-            error_y, desired_angle, self._tilt_angle,
+        # Step slowly toward the target — clamp step size
+        step = _clamp(diff, -CFG.tilt_step_per_frame, CFG.tilt_step_per_frame)
+        new_angle = self._tilt_angle + step
+        new_angle = _clamp(new_angle, CFG.tilt_min_angle, CFG.tilt_max_angle)
+
+        logger.debug(
+            "Tilt: target=%.1f°  current=%.1f°  step=%.2f° → new=%.1f°",
+            self._tilt_target_angle, self._tilt_angle, step, new_angle,
         )
-        self._tilt_angle = desired_angle
+
+        self._tilt_angle = new_angle
         self._apply_tilt()
-        self._tilt_moving_since = now
         self._face_last_seen = now
 
     def search(self) -> None:

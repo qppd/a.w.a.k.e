@@ -29,8 +29,10 @@ class Config:
     tilt_kp: float = 0.008
     pan_tilt_deadband: int = 30
     tilt_angle_deadband: float = 2.0   # min angle change (°) to trigger tilt servo
-    tilt_cooldown_seconds: float = 5.0 # pause after each servo movement (s)
-    tilt_move_time: float = 0.3        # time to let servo reach position before stopping PWM (s)
+    tilt_cooldown_seconds: float = 0.0 # pause after each servo movement (s) — disabled for smooth tracking
+    tilt_move_time: float = 0.0        # time to let servo reach position — disabled for smooth tracking
+    tilt_step_per_frame: float = 0.3   # max degrees per frame when tracking face (°)
+    tilt_smooth_alpha: float = 0.25    # exponential smoothing for target angle (0=frozen, 1=instant)
     tilt_search_min: float = 135.0     # search sweep lower bound (°)
     tilt_search_max: float = 165.0     # search sweep upper bound (°)
     tilt_face_lost_timeout: float = 3.0  # seconds before search resumes after face lost
